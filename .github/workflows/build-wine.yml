@@ -26,12 +26,8 @@ jobs:
           libasound2-dev libpulse-dev libudev-dev libcups2-dev \
           libjpeg-dev libpng-dev libtiff-dev libxml2-dev \
           libvulkan-dev vulkan-tools libvulkan1 mesa-vulkan-drivers \
-          mingw-w64 gettext libgettextpo-dev locales language-pack-zh-hans
-
-    - name: 安装多媒体和音频依赖
-      run: |
-        sudo apt install -y libunwind-dev
-        sudo apt install -y \
+          mingw-w64 gettext libgettextpo-dev locales language-pack-zh-hans \
+          libunwind-dev \
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
           libmpg123-dev libopenal-dev
 
@@ -57,22 +53,19 @@ jobs:
         echo "应用补丁: wine_do_not_create_dxgi_manager2.patch"
         patch -p1 < ../wine_do_not_create_dxgi_manager2.patch
 
-    - name: 彻底修复 Termux 路径问题
+    - name: 修复 Termux 临时路径
       run: |
         cd wine
-        echo "彻底修复 Termux 路径问题..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.in" -o -name "*.spec" \) -exec grep -l "/tmp" {} \; | xargs sed -i 's|/tmp/|/data/data/com.termux/files/usr/tmp/|g'
-        find server -type f \( -name "*.c" -o -name "*.h" \) -exec sed -i 's|"/tmp"|"/data/data/com.termux/files/usr/tmp"|g' {} +
-        find . -name "file.c" -exec sed -i 's|"/tmp"|"/data/data/com.termux/files/usr/tmp"|g' {} +
-        find . -name "loader.c" -exec sed -i 's|"/tmp"|"/data/data/com.termux/files/usr/tmp"|g' {} +
-        find . -name "server.c" -exec sed -i 's|"/tmp"|"/data/data/com.termux/files/usr/tmp"|g' {} +
-        echo "路径修复完成"
+        TMP_PATH="/data/data/com.termux/files/usr/tmp"
+        echo "将 /tmp 替换为 $TMP_PATH"
+        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.in" -o -name "*.spec" \) \
+          -exec sed -i "s|/tmp|$TMP_PATH|g" {} +
 
     - name: 配置和构建 WOW64 Wine
       run: |
         cd wine
         mkdir -p /tmp/wine-install
-        sudo chmod 777 -R /tmp/wine-install
+        chmod 777 -R /tmp/wine-install
         mkdir -p build-wow64
         cd build-wow64
         ../configure \
