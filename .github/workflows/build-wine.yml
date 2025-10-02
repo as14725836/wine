@@ -1,4 +1,4 @@
-name: Build Wine (True WOW64 for Termux with Vulkan and Full GStreamer)
+name: Wine (True WOW64 for Termux with Vulkan and Full GStreamer)
 
 on:
   workflow_dispatch:
