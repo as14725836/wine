@@ -51,7 +51,7 @@ jobs:
       run: |
         cd wine
         echo "应用补丁: wine_do_not_create_dxgi_manager2.patch"
-        patch -p1 < ../wine_do_not_create_dxgi_manager2.patch
+        patch -p1 < ./wine_do_not_create_dxgi_manager2.patch
 
     - name: 修复 Termux 临时路径
       run: |
