@@ -50,8 +50,21 @@ jobs:
     - name: 应用自定义补丁
       run: |
         cd wine
-        echo "应用补丁: wine_do_not_create_dxgi_manager2.patch"
-        patch -p1 < ./wine_do_not_create_dxgi_manager2.patch
+        PATCHES=$(ls ../*.patch 2>/dev/null || true)
+
+        if [ -z "$PATCHES" ]; then
+          echo "未找到任何补丁，跳过应用步骤。"
+        else
+          for patch in $PATCHES; do
+            echo "应用补丁: $patch"
+            if patch -p1 < "$patch"; then
+              echo "✅ 补丁应用成功: $patch"
+            else
+              echo "❌ 补丁应用失败: $patch"
+              exit 1
+            fi
+          done
+        fi
 
     - name: 修复 Termux 临时路径
       run: |
@@ -130,10 +143,3 @@ jobs:
       with:
         name: wine-wow64-${{ env.VERSION }}
         path: /tmp/wine-wow64-${{ env.VERSION }}.tar.gz
-
-    - name: 发布到 GitHub Release
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.ref_name }}
-        name: Wine WOW64 ${{ env.VERSION }} (Vulkan + GStreamer)
-        files: /tmp/wine-wow64-${{ env.VERSION }}.tar.gz
