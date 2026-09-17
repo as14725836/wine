@@ -219,6 +219,20 @@ static void output_relay_debug( struct exports *exports )
 {
     int i;
 
+    if (is_pe())
+    {
+        output( "\t.data\n" );
+        output( "\t.balign %u\n", get_ptr_size() );
+    }
+
+    output( ".L__wine_spec_relay_descr:\n" );
+    output( "\t%s 0xdeb90002\n", get_asm_ptr_keyword() );  /* magic */
+    output( "\t%s 0\n", get_asm_ptr_keyword() );           /* relay func */
+    output( "\t%s 0\n", get_asm_ptr_keyword() );           /* private data */
+    output( "\t%s __wine_spec_relay_entry_points\n", get_asm_ptr_keyword() );
+    output( "\t%s .L__wine_spec_relay_entry_point_offsets\n", get_asm_ptr_keyword() );
+    output( "\t%s .L__wine_spec_relay_args_string\n", get_asm_ptr_keyword() );
+
     /* first the table of entry point offsets */
 
     output( "\t%s\n", get_asm_rodata_section() );
@@ -550,35 +564,13 @@ void output_exports( DLLSPEC *spec )
 
     /* output relays */
 
-    if (needs_relay)
+    if (!is_pe())
     {
-        if (is_pe())
-        {
-            output( "\t.data\n" );
-            output( "\t.balign %u\n", get_ptr_size() );
-        }
-        else
-        {
-            output( "\t.balign %u\n", get_ptr_size() );
-            output( ".L__wine_spec_exports_end:\n" );
-        }
-
-        output( ".L__wine_spec_relay_descr:\n" );
-        output( "\t%s 0xdeb90002\n", get_asm_ptr_keyword() );  /* magic */
-        output( "\t%s 0\n", get_asm_ptr_keyword() );           /* relay func */
-        output( "\t%s 0\n", get_asm_ptr_keyword() );           /* private data */
-        output( "\t%s __wine_spec_relay_entry_points\n", get_asm_ptr_keyword() );
-        output( "\t%s .L__wine_spec_relay_entry_point_offsets\n", get_asm_ptr_keyword() );
-        output( "\t%s .L__wine_spec_relay_args_string\n", get_asm_ptr_keyword() );
-
-        output_relay_debug( exports );
+        output( "\t.balign %u\n", get_ptr_size() );
+        output( ".L__wine_spec_exports_end:\n" );
+        if (!needs_relay) output( "\t%s 0\n", get_asm_ptr_keyword() );
     }
-    else if (!is_pe())
-    {
-            output( "\t.balign %u\n", get_ptr_size() );
-            output( ".L__wine_spec_exports_end:\n" );
-            output( "\t%s 0\n", get_asm_ptr_keyword() );
-    }
+    if (needs_relay) output_relay_debug( exports );
 
     /* output import thunks */
 
