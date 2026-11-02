@@ -11,7 +11,9 @@
  *
  * Resolution order, highest priority first:
  *   1. environment variable (runtime override)
- *   2. value baked in from WINE_TGMUX_PREFIX
+ *   2. value baked in from WINE_TGMUX_PREFIX, or WINE_TGMUX_DEFAULT_TMPDIR
+ *      for the temp directory, which lives in $PREFIX/tmp rather than in
+ *      the glibc prefix.
  *
  * WINE_TGMUX_PREFIX can be overridden at configure time, e.g.
  *   CPPFLAGS='-DWINE_TGMUX_PREFIX="/data/data/com.termux/files/usr/glibc"'
@@ -33,6 +35,14 @@
 /* Compile-time concatenation of a literal suffix onto the prefix. */
 #define WINE_TGMUX_PATH( suffix ) WINE_TGMUX_PREFIX suffix
 
+/*
+ * Termux keeps its scratch space in $PREFIX/tmp, which lives outside the
+ * glibc prefix and is the only reliably writable temp directory on Android.
+ */
+#ifndef WINE_TGMUX_DEFAULT_TMPDIR
+#define WINE_TGMUX_DEFAULT_TMPDIR "/data/data/com.termux/files/usr/tmp"
+#endif
+
 /* Return `name` from the environment when set and non-empty, else `fallback`. */
 static inline const char *tgmux_env( const char *name, const char *fallback )
 {
@@ -40,14 +50,14 @@ static inline const char *tgmux_env( const char *name, const char *fallback )
     return (value && *value) ? value : fallback;
 }
 
-/* $WINE_TMP_DIR, then $TMPDIR, then <prefix>/tmp. */
+/* $WINE_TMP_DIR, then $TMPDIR, then the Termux tmp directory. */
 static inline const char *tgmux_tmpdir(void)
 {
     const char *value = getenv( "WINE_TMP_DIR" );
     if (value && *value) return value;
     value = getenv( "TMPDIR" );
     if (value && *value) return value;
-    return WINE_TGMUX_PATH( "/tmp" );
+    return WINE_TGMUX_DEFAULT_TMPDIR;
 }
 
 static inline const char *tgmux_sysconfdir(void)
