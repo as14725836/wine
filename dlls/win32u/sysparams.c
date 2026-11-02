@@ -26,6 +26,7 @@
 
 #include <pthread.h>
 #include <assert.h>
+#include <stdlib.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -5942,6 +5943,13 @@ void sysparams_init(void)
         decorated_mode = IS_OPTION_TRUE( buffer[0] );
     if (!get_config_key( hkey, appkey, "EmulateModeset", buffer, sizeof(buffer) ))
         emulate_modeset = IS_OPTION_TRUE( buffer[0] );
+
+    /* Works around mouse clicks going through borderless window edges. */
+    {
+        const char *decorate = getenv( "WINE_NO_WM_DECORATION" );
+
+        if (decorate && decorate[0] == '1') decorated_mode = FALSE;
+    }
 
 #undef IS_OPTION_TRUE
 
