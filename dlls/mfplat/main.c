@@ -18,6 +18,7 @@
 
 #include <stdarg.h>
 #include <string.h>
+#include <stdlib.h>
 #include <math.h>
 #include <limits.h>
 
@@ -9222,8 +9223,18 @@ static const IMFDXGIDeviceManagerVtbl dxgi_device_manager_vtbl =
 HRESULT WINAPI MFCreateDXGIDeviceManager(UINT *token, IMFDXGIDeviceManager **manager)
 {
     struct dxgi_device_manager *object;
+    const char *do_not_create = getenv( "WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER" );
 
     TRACE("%p, %p.\n", token, manager);
+
+    /* Some applications probe for a DXGI device manager and give up on the
+     * whole Media Foundation path when creation succeeds but the manager is
+     * unusable. Allow forcing the E_NOTIMPL answer they expect. */
+    if (do_not_create && do_not_create[0] != '\0')
+    {
+        FIXME( "WINE_DO_NOT_CREATE_DXGI_DEVICE_MANAGER set, stubbing out\n" );
+        return E_NOTIMPL;
+    }
 
     if (!token || !manager)
         return E_POINTER;
