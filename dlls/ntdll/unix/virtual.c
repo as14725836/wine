@@ -188,9 +188,9 @@ static void *address_space_start = (void *)0x110000; /* keep DOS area clear */
 static void *address_space_start = (void *)0x10000;
 #endif
 #ifdef _WIN64
-static void *address_space_limit = (void *)0x7fffffff0000;  /* top of the total available address space */
-static void *user_space_limit    = (void *)0x7fffffff0000;  /* top of the user address space */
-static void *working_set_limit   = (void *)0x7fffffff0000;  /* top of the current working set */
+static void *address_space_limit = (void *)0x7fffff0000;  /* top of the total available address space */
+static void *user_space_limit    = (void *)0x7fffff0000;  /* top of the user address space */
+static void *working_set_limit   = (void *)0x7fffff0000;  /* top of the current working set */
 #else
 static void *address_space_limit = (void *)0xc0000000;
 static void *user_space_limit    = (void *)0x7fff0000;
@@ -699,6 +699,72 @@ static void reserve_area( void *addr, void *end )
 #endif /* __APPLE__ */
 }
 
+
+/***********************************************************************
+ *           wine_emulator_detected
+ *
+ * Detect whether wine runs under an x86 emulator (box64 / box86 / FEX / qemu).
+ * Such emulators translate the guest code and execute it inside their own
+ * (host) address space, so every wine assumption based on host addresses
+ * becomes invalid:
+ *   - the 47-bit / 128TB high address area layout used by the preloader
+ *   - seccomp decisions of the form "native libs live in high addresses"
+ *   - the 64KB alignment the emulator imposes on wine's own mappings
+ * This helper is the single place to query that state.
+ *   WINE_EMULATOR=<name>     force on
+ *   WINE_EMULATOR=0          force off (escape hatch)
+ */
+static int wine_emulator_detected(void)
+{
+    static int cached = -1;
+    const char *env;
+
+    if (cached >= 0) return cached;
+    cached = 0;
+
+    if ((env = getenv( "WINE_EMULATOR" )) && *env)
+    {
+        cached = (env[0] == '0' && !env[1]) ? 0 : 1;
+        return cached;
+    }
+    if (getenv( "BOX64_VERSION" ) || getenv( "BOX64_LD_LIBRARY_PATH" ) || getenv( "BOX64_LOG" ) ||
+        getenv( "BOX86_VERSION" ) || getenv( "BOX86_LD_LIBRARY_PATH" ) ||
+        getenv( "FEX_TSOENABLED" ) || getenv( "FEX_ROOTFS" ) || getenv( "FEX_APP_CONFIG" ) ||
+        getenv( "QEMU_LD_PREFIX" ) || getenv( "QEMU_CPU" ))
+        cached = 1;
+#ifdef __linux__
+    if (!cached)
+    {
+        /* box64/box86/FEX keep the guest binary mapped in their own process,
+         * so /proc/self/exe points at the emulator itself. */
+        char buf[256];
+        ssize_t len = readlink( "/proc/self/exe", buf, sizeof(buf) - 1 );
+        if (len > 0)
+        {
+            buf[len] = 0;
+            if (strstr( buf, "box64" ) || strstr( buf, "box86" ) ||
+                strstr( buf, "FEXInterpreter" ) || strstr( buf, "qemu-" ))
+                cached = 1;
+        }
+    }
+#endif
+    return cached;
+}
+
+/***********************************************************************
+ *           wine_emulator_addr_space_limit
+ *
+ * Upper bound of the address space to use under an emulator. Defaults to the
+ * same 39-bit safe window used by the 39-bit layout patches (512GB - 64KB),
+ * overridable with WINE_EMULATOR_LIMIT=<hex|dec>.
+ */
+static void *wine_emulator_addr_space_limit(void)
+{
+    const char *env = getenv( "WINE_EMULATOR_LIMIT" );
+
+    if (env && *env) return (void *)(ULONG_PTR)strtoull( env, NULL, 0 );
+    return (void *)0x7fffff0000;
+}
 
 static void mmap_init( const struct preload_info *preload_info )
 {
@@ -2390,6 +2456,12 @@ static NTSTATUS map_file_into_view( struct file_view *view, int fd, size_t start
         case EACCES:
         case EPERM:  /* access error, fall back to read() */
             if (vprot & VPROT_WRITE) return STATUS_ACCESS_DENIED;
+            /* Under an x86 emulator the section is only read as data (the code
+             * is translated, never executed from this mapping), so a noexec
+             * filesystem such as /sdcard can still be served by the read()
+             * fallback below instead of failing the image load. */
+            if ((vprot & VPROT_EXEC) && wine_emulator_detected())
+                WARN( "box64/emu compat: noexec exec map relaxed, falling back to read\n" );
             break;
         default:
             ERR( "mmap error %s, range %p-%p, unix_prot %#x\n",
@@ -3660,6 +3732,17 @@ void virtual_init(void)
 #else
     host_addr_space_limit = address_space_limit;
 #endif
+
+    if (wine_emulator_detected())
+    {
+        void *limit = wine_emulator_addr_space_limit();
+
+        address_space_limit = limit;
+        user_space_limit    = limit;
+        working_set_limit   = limit;
+        host_addr_space_limit = limit;
+        WARN( "box64/emu compat: address space limited to %p\n", limit );
+    }
 
     kernel_writewatch_init();
 
