@@ -1548,6 +1548,8 @@ static void freetype_load_fonts(void)
     load_mac_fonts();
 #elif defined(__ANDROID__)
     ReadFontDir("/system/fonts", TRUE);
+    /* Termux glibc ships its own font set; load it after the platform fonts. */
+    ReadFontDir( "/data/data/com.termux/files/usr/glibc/share/fonts", TRUE );
 #endif
 }
 

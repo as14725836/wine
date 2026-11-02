@@ -992,6 +992,7 @@ SOURCES = \
 	wine/strmbase.h \
 	wine/svcctl.idl \
 	wine/test.h \
+	wine/tgmux_paths.h \
 	wine/unixlib.h \
 	wine/vulkan.h \
 	wine/vulkan_driver.h \
