@@ -1892,8 +1892,11 @@ static void init_dns_config(void)
     const char *dns_server;
     FILE *f;
     int i;
-    /* Check if standard resolv.conf exists */
-    if (!access("/etc/resolv.conf", R_OK)) return;
+    /* Check if a standard resolv.conf already exists in the glibc prefix. Use
+     * the Termux path policy (tgmux) rather than the bare /etc path so the
+     * check agrees with resolv_paths[] below; on Termux the glibc resolver
+     * reads <prefix>/etc/resolv.conf, not the Bionic /etc. */
+    if (!access(WINE_TGMUX_PATH("/etc/resolv.conf"), R_OK)) return;
     /* Set short timeout as safety net - prevents long hangs even if
      * resolv.conf creation below fails (e.g., permission denied) */
     setenv("RES_OPTIONS", "timeout:1 attempts:1", 0);
