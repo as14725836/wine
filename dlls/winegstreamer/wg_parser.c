@@ -910,6 +910,13 @@ static bool stream_create_post_processing_elements(GstPad *pad, struct wg_parser
 
     if (!strcmp(name, "video/x-raw"))
     {
+        /* Hack: Flatten colorimetry to defaults (Proton media-converter). */
+        if (!(element = create_element("capssetter", "good"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        gst_util_set_object_arg(G_OBJECT(element), "join", "true");
+        gst_util_set_object_arg(G_OBJECT(element), "caps", "video/x-raw,colorimetry=0:0:0:0");
+
         /* DirectShow can express interlaced video, but downstream filters can't
          * necessarily consume it. In particular, the video renderer can't. */
         if (!(element = create_element("deinterlace", "good"))

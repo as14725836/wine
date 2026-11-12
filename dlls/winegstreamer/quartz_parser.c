@@ -2504,6 +2504,8 @@ static HRESULT avi_splitter_source_query_accept(struct parser_source *pin, const
     HRESULT hr;
 
     wg_parser_stream_get_current_format(pin->wg_stream, &format);
+    if (format.major_type == WG_MAJOR_TYPE_VIDEO || format.major_type == WG_MAJOR_TYPE_AUDIO)
+        return amt_to_wg_format(mt, &format) ? S_OK : S_FALSE;
     if (wg_video_format_is_rgb(format.u.video.format))
         format.u.video.height = -format.u.video.height;
     if (!amt_from_wg_format(&pad_mt, &format, false))
@@ -2671,6 +2673,8 @@ static HRESULT mpeg_splitter_source_query_accept(struct parser_source *pin, cons
     HRESULT hr;
 
     wg_parser_stream_get_current_format(pin->wg_stream, &format);
+    if (format.major_type == WG_MAJOR_TYPE_VIDEO || format.major_type == WG_MAJOR_TYPE_AUDIO)
+        return amt_to_wg_format(mt, &format) ? S_OK : S_FALSE;
     if (!amt_from_wg_format(&pad_mt, &format, false))
         return E_OUTOFMEMORY;
     hr = compare_media_types(mt, &pad_mt) ? S_OK : S_FALSE;
