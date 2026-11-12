@@ -144,6 +144,31 @@ jobs:
           sudo apt install -y $BASE_DEPS
 
       # --------------------------------------------------------
+      # 多媒体 / 音频依赖
+      #
+      # libgstreamer*-dev 提供 x86_64 的 libgstreamer-1.0.so 链接桩。
+      # 下面 sysroot 步骤只借用 .pc 的 Cflags（sysroot 里的 1.29.2 头文件），
+      # libdir 指回 /usr/lib/x86_64-linux-gnu；如果没有这一层 .so 链接名，
+      # configure 会报：
+      #   checking for gst/gst.h... yes
+      #   checking for gst_pad_new in -lgstreamer-1.0... no
+      #   error: gstreamer-1.0 base plugins 64-bit development files not found
+      # --------------------------------------------------------
+
+      - name: 安装多媒体和音频依赖
+        if: ${{ (github.event.inputs.enable_gstreamer || 'true') == 'true' }}
+        run: |
+          set -e
+          sudo apt update
+          sudo apt install -y \
+            libunwind-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-* \
+            libmpg123-dev \
+            libopenal-dev
+
+      # --------------------------------------------------------
       # GStreamer 头 sysroot
       #
       # 只借用 sysroot 的 pkg-config Cflags（头文件 + 版本号），
