@@ -24,6 +24,9 @@
 #include "unixlib.h"
 
 #include <stdbool.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <gst/gst.h>
 #include <gst/audio/audio.h>
 
