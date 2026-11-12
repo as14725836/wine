@@ -5979,6 +5979,8 @@ struct set_keyboard_repeat_reply
 };
 
 
+#define ESYNC_USED_BY_SERVER 0x7eadeeee
+
 enum esync_type
 {
     ESYNC_SEMAPHORE = 1,
@@ -7134,6 +7136,6 @@ union generic_reply
     struct fsync_free_shm_idx_reply fsync_free_shm_idx_reply;
 };
 
-#define SERVER_PROTOCOL_VERSION 931
+#define SERVER_PROTOCOL_VERSION 932
 
 #endif /* __WINE_WINE_SERVER_PROTOCOL_H */

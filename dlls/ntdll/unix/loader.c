@@ -198,6 +198,12 @@ SECTION_IMAGE_INFORMATION main_image_info = { NULL };
  * on it to avoid busy-looping in their alert waiters.  Proton enables it
  * for a hardcoded list of titles; we expose only the environment switch. */
 BOOL alert_simulate_sched_quantum;
+/* Proton tunes these per game title (hardcoded exe names and Steam
+ * app ids); we keep only the environment switches. */
+BOOL fsync_simulate_sched_quantum;
+BOOL fsync_yield_to_waiters;
+BOOL fsync_help_simulated_pulse;
+BOOL ac_odyssey;
 
 /* die on a fatal error; use only during initialization */
 static void fatal_error( const char *err, ... )

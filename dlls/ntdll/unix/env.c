@@ -833,6 +833,14 @@ void init_environment(void)
      * Neptunia set, ...); keep only the environment switch here. */
     if ((env_str = getenv( "WINE_ALERT_SIMULATE_SCHED_QUANTUM" )))
         alert_simulate_sched_quantum = !!atoi( env_str );
+    if ((env_str = getenv( "WINE_FSYNC_SIMULATE_SCHED_QUANTUM" )))
+        fsync_simulate_sched_quantum = !!atoi( env_str );
+    if ((env_str = getenv( "WINE_FSYNC_YIELD_TO_WAITERS" )))
+        fsync_yield_to_waiters = !!atoi( env_str );
+    if ((env_str = getenv( "WINE_FSYNC_HELP_SIMULATED_PULSE" )))
+        fsync_help_simulated_pulse = !!atoi( env_str );
+    if ((env_str = getenv( "WINE_SIMULATE_ASYNC_READ" )))
+        ac_odyssey = !!atoi( env_str );
 
     if ((case_table = read_nls_file( "l_intl.nls" )))
     {

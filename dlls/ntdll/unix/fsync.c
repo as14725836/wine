@@ -68,9 +68,14 @@ static int current_pid;
 
 /* futex_waitv interface */
 
-#ifndef __NR_futex_waitv
+/* glibc's bits/futex.h may define __NR_futex_waitv without providing
+ * FUTEX_32 or struct futex_waitv (those come from linux/futex.h in a
+ * recent kernel uapi).  Guard on the pieces we actually use. */
+#ifndef FUTEX_32
 
-# define __NR_futex_waitv 449
+# ifndef __NR_futex_waitv
+#  define __NR_futex_waitv 449
+# endif
 # define FUTEX_32 2
 struct futex_waitv {
     uint64_t   val;

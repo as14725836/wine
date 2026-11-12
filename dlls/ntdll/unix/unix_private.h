@@ -119,6 +119,7 @@ struct ntdll_thread_data
     PRTL_THREAD_START_ROUTINE start;         /* thread entry point */
     void                     *param;         /* thread entry point parameter */
     void                     *jmp_buf;       /* setjmp buffer for exception handling */
+    int                      *fsync_apc_futex;
 };
 
 C_ASSERT( sizeof(struct ntdll_thread_data) <= sizeof(((TEB *)0)->GdiTebBatch) );
@@ -201,6 +202,10 @@ extern unsigned int supported_machines_count;
 extern USHORT supported_machines[8];
 extern BOOL process_exiting;
 extern BOOL alert_simulate_sched_quantum;
+extern BOOL fsync_simulate_sched_quantum;
+extern BOOL fsync_yield_to_waiters;
+extern BOOL fsync_help_simulated_pulse;
+extern BOOL ac_odyssey;
 extern HANDLE keyed_event;
 extern int inproc_device_fd;
 extern timeout_t server_start_time;
@@ -231,6 +236,7 @@ extern unsigned int server_select( const union select_op *select_op, data_size_t
                                    timeout_t abs_timeout, struct context_data *context, struct user_apc *user_apc );
 extern unsigned int server_wait( const union select_op *select_op, data_size_t size, UINT flags,
                                  const LARGE_INTEGER *timeout );
+extern int get_inproc_alert_fd(void);
 extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
 extern unsigned int server_queue_process_apc( HANDLE process, const union apc_call *call,
                                               union apc_result *result );

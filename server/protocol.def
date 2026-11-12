@@ -4156,6 +4156,8 @@ struct handle_info
 @END
 
 
+#define ESYNC_USED_BY_SERVER 0x7eadeeee
+
 enum esync_type
 {
     ESYNC_SEMAPHORE = 1,
