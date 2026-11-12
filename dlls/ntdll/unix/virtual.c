@@ -699,8 +699,6 @@ static void reserve_area( void *addr, void *end )
 #endif /* __APPLE__ */
 }
 
-
-}
 /***********************************************************************
  *           wine_emulator_addr_space_limit
  *
