@@ -219,18 +219,9 @@ jobs:
         env:
           FFMPEG_VERSION: '8.1.1'
           FFMPEG_PREFIX: /tmp/ffmpeg
-        run: |
-          set -eux
-          PKG_RELEASE="packages-39239132896"
-          ASSET="ffmpeg-glibc-${FFMPEG_VERSION}-1-x86_64.pkg.tar.xz"
-          curl -fSL --retry 5 --retry-all-errors --max-time 900 \
-            -o /tmp/ffmpeg.pkg.tar.xz \
-            "https://github.com/as14725836/glibc-packages/releases/download/${PKG_RELEASE}/${ASSET}"
-          rm -rf "${FFMPEG_PREFIX}"
-          mkdir -p "${FFMPEG_PREFIX}"
-          tar -xJf /tmp/ffmpeg.pkg.tar.xz -C "${FFMPEG_PREFIX}" --strip-components=1
-          test -f "${FFMPEG_PREFIX}/lib/pkgconfig/libavformat.pc"
-          echo "FFMPEG_PREFIX=${FFMPEG_PREFIX}" >> "$GITHUB_ENV"
+          FFMPEG_PKG_RELEASE: packages-39239132896
+          FFMPEG_PKG_ARCH: x86_64
+        run: bash ci/fetch_ffmpeg_prebuilt.sh
 
       # --------------------------------------------------------
       # 配置并编译
