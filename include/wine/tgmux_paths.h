@@ -102,4 +102,13 @@ static inline const char *tgmux_zdrive_root(void)
     return tgmux_env( "WINE_ZDRIVE_ROOT", "/data/data/com.termux/files" );
 }
 
+/* The host font directory shipped with the glibc prefix. Overridable at
+ * runtime so the font set can be relocated without rebuilding Wine.
+ * Used by the freetype font loader to scan the Termux glibc font tree
+ * directly, independent of fontconfig's own configuration. */
+static inline const char *tgmux_fontdir(void)
+{
+    return tgmux_env( "WINE_FONT_DIR", WINE_TGMUX_PATH( "/share/fonts" ) );
+}
+
 #endif /* __WINE_TGMUX_PATHS_H */
