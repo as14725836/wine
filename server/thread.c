@@ -57,6 +57,8 @@
 #include "handle.h"
 #include "process.h"
 #include "thread.h"
+#include "esync.h"
+#include "fsync.h"
 #include "request.h"
 #include "user.h"
 #include "security.h"
@@ -1774,7 +1776,16 @@ DECL_HANDLER(init_first_thread)
     set_reply_data( supported_machines,
                     min( supported_machines_count * sizeof(unsigned short), get_reply_max_size() ));
 
-    if ((fd = get_inproc_device_fd()) >= 0)
+    if (do_fsync())
+    {
+        reply->inproc_device = FSYNC_USED_BY_SERVER;
+    }
+    else if (do_esync())
+    {
+        reply->inproc_device = ESYNC_USED_BY_SERVER;
+        send_client_fd( process, esync_get_shm_fd(), reply->inproc_device );
+    }
+    else if ((fd = get_inproc_device_fd()) >= 0)
     {
         reply->inproc_device = get_process_id( process ) | 1;
         send_client_fd( process, fd, reply->inproc_device );

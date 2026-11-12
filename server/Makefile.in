@@ -13,10 +13,12 @@ SOURCES = \
 	device.c \
 	directory.c \
 	event.c \
+	esync.c \
 	fd.c \
 	file.c \
 	handle.c \
 	hook.c \
+	fsync.c \
 	inproc_sync.c \
 	mach.c \
 	mailslot.c \

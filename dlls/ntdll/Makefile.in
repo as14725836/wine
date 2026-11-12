@@ -62,6 +62,8 @@ SOURCES = \
 	unix/signal_i386.c \
 	unix/signal_x86_64.c \
 	unix/socket.c \
+	unix/esync.c \
+	unix/fsync.c \
 	unix/sync.c \
 	unix/system.c \
 	unix/tape.c \

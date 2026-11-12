@@ -19,6 +19,8 @@
  */
 
 #include "config.h"
+#include "esync.h"
+#include "fsync.h"
 
 #include <assert.h>
 #include <ctype.h>
@@ -265,6 +267,10 @@ int main( int argc, char *argv[] )
     init_memory();
     init_directories( load_intl_file() );
     init_threading();
+    if (do_fsync())
+        fsync_init();
+    else if (do_esync())
+        esync_init();
     init_registry();
     main_loop();
     return 0;
