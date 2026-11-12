@@ -1,0 +1,365 @@
+name: build
+
+# 只构建本仓库（as14725836/wine）的 master 分支。
+#
+# 由 termux-glibc-mangohud 的 termux-glibc-wine.yml 精简而来：
+#   - 删除所有外部源码克隆（WinNative-Emu/proton-wine 及全部 wine_branch 选项）
+#   - 删除所有外部分支选择（proton_branch / wine_branch / wine_version / proton_repo）
+#   - 删除所有外部补丁注入（patches/wow64/*.py、patches/adapted-11.18/、patches/*.patch）
+#   - 删除双 job（build-proton / build-wine），只保留一条构建路径
+#   - 删除反检测 / 注册表改名 / fshack FSR / 安装包瘦身等应用层改动
+#
+# 保留的只有构建一条 Termux 可用的 Wine 所必需的基础设施：
+#   - 宿主编译依赖（wine 本体 + mingw 交叉 + X/Wayland/Vulkan 库）
+#   - GStreamer 头 sysroot（aarch64 版头文件 + 本机 x86_64 同 SONAME 链接桩）
+#   - FFmpeg 预编译包（供 winedmo 使用）
+#   - ccache 缓存
+#
+# Termux 运行时适配已内建在本仓库源码里，不再由本工作流注入：
+#   include/wine/tgmux_paths.h —— 路径策略（tmpdir / sysconfdir / machine_id /
+#   datadir / zonedir / fontdir / zdrive 根），被 ntdll、crypt32、win32u 引用。
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+    inputs:
+      enable_gstreamer:
+        description: '启用 GStreamer（winegstreamer）'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+      enable_ffmpeg:
+        description: '启用 FFmpeg（winedmo）'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+      gst_decoders_version:
+        description: 'GStreamer decoders sysroot 版本'
+        required: false
+        default: '1.29.2'
+        type: string
+
+env:
+  BUILD_NAME: wine-termux-wow64
+  PREFIX: /tmp/wine-install
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      # --------------------------------------------------------
+      # Checkout —— 只取本仓库
+      # --------------------------------------------------------
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # --------------------------------------------------------
+      # 宿主编译依赖
+      # --------------------------------------------------------
+
+      - name: 安装构建依赖
+        run: |
+          set -e
+          sudo apt update
+          sudo apt --fix-broken install -y
+
+          BASE_DEPS="\
+            perl \
+            git \
+            wget \
+            xz-utils \
+            autoconf \
+            flex \
+            bison \
+            gcc-multilib \
+            g++-multilib \
+            libx11-dev \
+            libxext-dev \
+            libxi-dev \
+            pkg-config \
+            libegl-dev \
+            libgbm-dev \
+            libdrm-dev \
+            libepoxy-dev \
+            libxkbcommon-x11-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxcomposite-dev \
+            libxdamage-dev \
+            libxfixes-dev \
+            libxxf86vm-dev \
+            libxrender-dev \
+            libxinerama-dev \
+            libgl-dev \
+            libsdl2-dev \
+            libglu-dev \
+            libosmesa6-dev \
+            libfreetype6-dev \
+            libfontconfig1-dev \
+            libpcap-dev \
+            libdbus-1-dev \
+            libssl-dev \
+            libasound2-dev \
+            libswscale-dev \
+            libswresample-dev \
+            libpulse-dev \
+            libudev-dev \
+            libcups2-dev \
+            libjpeg-dev \
+            libpng-dev \
+            libtiff-dev \
+            libxml2-dev \
+            libvulkan-dev \
+            vulkan-tools \
+            libvulkan1 \
+            mesa-vulkan-drivers \
+            mingw-w64 \
+            gettext \
+            libgettextpo-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libxkbcommon-dev \
+            ccache"
+
+          sudo apt install -y $BASE_DEPS
+
+      # --------------------------------------------------------
+      # GStreamer 头 sysroot
+      #
+      # 只借用 sysroot 的 pkg-config Cflags（头文件 + 版本号），
+      # Libs 指向本机 apt 的 x86_64 目录作为同 SONAME 链接桩 ——
+      # 这样不会让 aarch64 的 .so 参与 x86_64 链接，
+      # 也不会让 sysroot 里的 freetype2/fontconfig 等同名 .pc 遮蔽系统库。
+      # --------------------------------------------------------
+
+      - name: 安装 GStreamer decoders sysroot
+        if: ${{ (github.event.inputs.enable_gstreamer || 'true') == 'true' }}
+        shell: bash
+        env:
+          GST_REPO: as14725836/termux-glibc-GStreamer
+          GST_TAG: ${{ github.event.inputs.gst_decoders_version || '1.29.2' }}
+        run: |
+          set -eux
+          DEST="/opt/gst-sysroot"
+          ASSET="termux-glibc-gst-decoders-${GST_TAG}.tar.gz"
+          rm -rf "${DEST}"
+          mkdir -p "${DEST}"
+          echo "GStreamer decoders: ${GST_REPO} @ ${GST_TAG}"
+          curl -fSL --retry 5 --retry-all-errors --max-time 900 \
+            -o /tmp/gst-decoders.tar.gz \
+            "https://github.com/${GST_REPO}/releases/download/${GST_TAG}/${ASSET}"
+
+          tar -xzf /tmp/gst-decoders.tar.gz -C "${DEST}" --strip-components=1
+          test -f "${DEST}/lib/pkgconfig/gstreamer-1.0.pc"
+
+          HOST_LIBDIR="/usr/lib/x86_64-linux-gnu"
+          PCGST="${DEST}/pc-gst"
+          rm -rf "${PCGST}"
+          mkdir -p "${PCGST}"
+          for pc in gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 gstreamer-video-1.0 \
+                    gstreamer-audio-1.0 gstreamer-tag-1.0 gstreamer-pbutils-1.0 gstreamer-controller-1.0; do
+            if [ -f "${DEST}/lib/pkgconfig/${pc}.pc" ]; then
+              cp "${DEST}/lib/pkgconfig/${pc}.pc" "${PCGST}/${pc}.pc"
+            fi
+          done
+          sed -i "s|^prefix=.*|prefix=${DEST}|" "${PCGST}"/*.pc
+          sed -i "s|^libdir=.*|libdir=${HOST_LIBDIR}|" "${PCGST}"/*.pc
+          sed -i '/^Requires\.private:/d;/^Libs\.private:/d' "${PCGST}"/*.pc
+
+          GSTV=$(PKG_CONFIG_LIBDIR="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
+                 PKG_CONFIG_PATH="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
+                 pkg-config --modversion gstreamer-1.0)
+          echo "gstreamer-1.0.pc 版本 = ${GSTV}"
+          [ "${GSTV}" = "${GST_TAG}" ] || { echo "FATAL: 版本 ${GSTV} != 期望 ${GST_TAG}"; exit 1; }
+
+          for p in gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 \
+                   gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0; do
+            PKG_CONFIG_LIBDIR="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
+            PKG_CONFIG_PATH="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
+            pkg-config --exists "$p" || { echo "FATAL: 缺 ${p}.pc"; exit 1; }
+          done
+          echo "GST_SYSROOT=${DEST}" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------------
+      # ccache
+      # --------------------------------------------------------
+
+      - name: 启用 ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ runner.os }}-wine-wow64
+          max-size: 2G
+
+      # --------------------------------------------------------
+      # FFmpeg 预编译包（winedmo）
+      # --------------------------------------------------------
+
+      - name: 下载 FFmpeg 预编译包
+        if: ${{ (github.event.inputs.enable_ffmpeg || 'true') == 'true' }}
+        env:
+          FFMPEG_VERSION: '8.1.1'
+          FFMPEG_PREFIX: /tmp/ffmpeg
+        run: |
+          set -eux
+          PKG_RELEASE="packages-39239132896"
+          ASSET="ffmpeg-glibc-${FFMPEG_VERSION}-1-x86_64.pkg.tar.xz"
+          curl -fSL --retry 5 --retry-all-errors --max-time 900 \
+            -o /tmp/ffmpeg.pkg.tar.xz \
+            "https://github.com/as14725836/glibc-packages/releases/download/${PKG_RELEASE}/${ASSET}"
+          rm -rf "${FFMPEG_PREFIX}"
+          mkdir -p "${FFMPEG_PREFIX}"
+          tar -xJf /tmp/ffmpeg.pkg.tar.xz -C "${FFMPEG_PREFIX}" --strip-components=1
+          test -f "${FFMPEG_PREFIX}/lib/pkgconfig/libavformat.pc"
+          echo "FFMPEG_PREFIX=${FFMPEG_PREFIX}" >> "$GITHUB_ENV"
+
+      # --------------------------------------------------------
+      # 配置并编译
+      # --------------------------------------------------------
+
+      - name: 配置并编译 Wine
+        env:
+          ENABLE_GSTREAMER: ${{ github.event.inputs.enable_gstreamer || 'true' }}
+          ENABLE_FFMPEG: ${{ github.event.inputs.enable_ffmpeg || 'true' }}
+        run: |
+          set -e
+          export LANG=C.UTF-8
+          export LC_ALL=C.UTF-8
+
+          if [ -x ./autogen.sh ]; then
+            ./autogen.sh
+          else
+            autoreconf -fiv
+          fi
+
+          mkdir -p build-wow64
+          cd build-wow64
+
+          export CC="ccache gcc"
+          export CXX="ccache g++"
+          export CROSSCC="ccache x86_64-w64-mingw32-gcc"
+          export CROSSCXX="ccache x86_64-w64-mingw32-g++"
+
+          # GStreamer：Cflags 走 sysroot 头文件，Libs 走本机 x86_64 同 SONAME 桩
+          if [ "${ENABLE_GSTREAMER}" = "true" ] && [ -n "${GST_SYSROOT}" ]; then
+            HOST_LIBDIR="/usr/lib/x86_64-linux-gnu"
+            export PKG_CONFIG_PATH="${GST_SYSROOT}/pc-gst:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig"
+            export PKG_CONFIG_LIBDIR="${GST_SYSROOT}/pc-gst:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig"
+            WINE_GSTREAMER_ARG="--with-gstreamer"
+            echo "gstreamer: $(pkg-config --modversion gstreamer-1.0)"
+          else
+            WINE_GSTREAMER_ARG="--without-gstreamer"
+            echo "gstreamer: 未启用"
+          fi
+
+          # FFmpeg（winedmo）
+          if [ "${ENABLE_FFMPEG}" = "true" ] && [ -f "${FFMPEG_PREFIX}/lib/pkgconfig/libavformat.pc" ]; then
+            export PKG_CONFIG_PATH="${FFMPEG_PREFIX}/lib/pkgconfig:${PKG_CONFIG_PATH}"
+            export PKG_CONFIG_LIBDIR="${FFMPEG_PREFIX}/lib/pkgconfig:${PKG_CONFIG_LIBDIR}"
+            export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:${LD_LIBRARY_PATH:-}"
+            WINE_FFMPEG_ARG="--with-ffmpeg"
+            echo "winedmo: FFmpeg $(pkg-config --modversion libavformat)"
+          else
+            WINE_FFMPEG_ARG="--without-ffmpeg"
+            echo "winedmo: 未启用"
+          fi
+
+          export CFLAGS="-march=x86-64 -msse3 -mfpmath=sse -O2 -pipe \
+            -fno-plt -fno-semantic-interposition -fno-math-errno -fno-trapping-math \
+            -ffunction-sections -fdata-sections -fmerge-all-constants -fno-ident"
+          export CXXFLAGS="$CFLAGS"
+          export CROSSCFLAGS="-march=x86-64 -msse3 -mfpmath=sse -O2 -pipe \
+            -fno-plt -fno-math-errno -ffunction-sections -fdata-sections \
+            -fmerge-all-constants -fno-ident"
+          export CROSSCXXFLAGS="$CROSSCFLAGS"
+          export LDFLAGS="-Wl,-O2 -Wl,--as-needed -Wl,--gc-sections -Wl,--build-id=none"
+
+          # 这套开关沿用 termux-glibc-mangohud 的 Termux 定制：
+          #   --enable-win64 + --enable-archs 一起传，win64=yes 会抑制 configure.ac:123
+          #   的 -m32 单架构分支，由 archs 决定 PE 侧编哪几个架构；
+          #   --without-wayland/ldap/capi/cups/dbus/oss/usb/v4l2 等在 Termux 上没有
+          #   对应库或没有意义，关掉以减少依赖面与包体积。
+          ../configure \
+            --enable-win64 \
+            --enable-archs=i386,x86_64 \
+            --prefix="${PREFIX}" \
+            --with-x \
+            --with-vulkan \
+            --with-alsa \
+            --with-pulse \
+            --with-freetype \
+            --with-fontconfig \
+            --with-gettext \
+            --with-opengl \
+            --with-sdl \
+            --enable-nls \
+            --disable-winemenubuilder \
+            --disable-win16 \
+            --disable-tests \
+            --without-wayland \
+            --without-ldap \
+            --without-capi \
+            --without-oss \
+            --without-cups \
+            --without-dbus \
+            --without-coreaudio \
+            --without-gphoto \
+            --without-osmesa \
+            --without-sane \
+            --without-pcap \
+            --without-pcsclite \
+            --without-udev \
+            --without-unwind \
+            --without-usb \
+            --without-v4l2 \
+            ${WINE_GSTREAMER_ARG} \
+            ${WINE_FFMPEG_ARG}
+
+          make -j"$(nproc)"
+
+      # --------------------------------------------------------
+      # 安装 & 打包
+      # --------------------------------------------------------
+
+      - name: 安装
+        run: make -C build-wow64 install
+
+      - name: 创建压缩包
+        run: |
+          set -e
+          mkdir -p wine-package
+          cp -a "${PREFIX}" "wine-package/${BUILD_NAME}"
+          tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 \
+              --numeric-owner -I 'xz -T0 -9e' \
+              -cf "${BUILD_NAME}.tar.xz" -C wine-package "${BUILD_NAME}"
+          sha256sum "${BUILD_NAME}.tar.xz" > checksums.txt
+          ls -lh "${BUILD_NAME}.tar.xz"
+          cat checksums.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BUILD_NAME }}
+          path: |
+            ${{ github.workspace }}/*.tar.xz
+            ${{ github.workspace }}/checksums.txt
+          retention-days: 30
