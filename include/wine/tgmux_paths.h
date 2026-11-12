@@ -65,6 +65,18 @@ static inline const char *tgmux_sysconfdir(void)
     return tgmux_env( "WINE_SYSCONF_DIR", WINE_TGMUX_PATH( "/etc" ) );
 }
 
+/*
+ * D-Bus machine-id. On a normal Linux host this lives at
+ * /var/lib/dbus/machine-id, but Wine also consults /etc/machine-id, and on
+ * Termux glibc the whole sysconf tree (including machine-id) lives under the
+ * glibc prefix, so resolve it through sysconfdir. Allow a dedicated override
+ * for setups that place it elsewhere.
+ */
+static inline const char *tgmux_machine_id(void)
+{
+    return tgmux_env( "WINE_MACHINE_ID", WINE_TGMUX_PATH( "/etc/machine-id" ) );
+}
+
 static inline const char *tgmux_datadir(void)
 {
     return tgmux_env( "WINE_DATA_DIR", WINE_TGMUX_PATH( "/share" ) );
