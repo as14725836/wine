@@ -194,6 +194,10 @@ const char **dll_paths = NULL;
 const char **system_dll_paths = NULL;
 const char *user_name = NULL;
 SECTION_IMAGE_INFORMATION main_image_info = { NULL };
+/* Simulate a scheduler quantum in NtWaitForAlertByThreadId; some games rely
+ * on it to avoid busy-looping in their alert waiters.  Proton enables it
+ * for a hardcoded list of titles; we expose only the environment switch. */
+BOOL alert_simulate_sched_quantum;
 
 /* die on a fatal error; use only during initialization */
 static void fatal_error( const char *err, ... )

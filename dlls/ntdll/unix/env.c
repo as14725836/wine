@@ -824,9 +824,15 @@ static void init_locale(void)
 void init_environment(void)
 {
     USHORT *case_table;
+    const char *env_str;
 
     init_unix_codepage();
     init_locale();
+
+    /* Proton enables this hack for a hardcoded list of titles (GTA5, the
+     * Neptunia set, ...); keep only the environment switch here. */
+    if ((env_str = getenv( "WINE_ALERT_SIMULATE_SCHED_QUANTUM" )))
+        alert_simulate_sched_quantum = !!atoi( env_str );
 
     if ((case_table = read_nls_file( "l_intl.nls" )))
     {
