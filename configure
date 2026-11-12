@@ -9930,6 +9930,7 @@ then :
 
 fi
 ac_fn_c_check_header_compile "$LINENO" "linux/fs.h" "ac_cv_header_linux_fs_h" "$ac_includes_default"
+ac_fn_c_check_header_compile "$LINENO" "linux/futex.h" "ac_cv_header_linux_futex_h" "$ac_includes_default"
 if test "x$ac_cv_header_linux_fs_h" = xyes
 then :
   printf "%s\n" "#define HAVE_LINUX_FS_H 1" >>confdefs.h
@@ -10140,6 +10141,7 @@ then :
 
 fi
 ac_fn_c_check_header_compile "$LINENO" "sys/event.h" "ac_cv_header_sys_event_h" "$ac_includes_default"
+ac_fn_c_check_header_compile "$LINENO" "sys/eventfd.h" "ac_cv_header_sys_eventfd_h" "$ac_includes_default"
 if test "x$ac_cv_header_sys_event_h" = xyes
 then :
   printf "%s\n" "#define HAVE_SYS_EVENT_H 1" >>confdefs.h

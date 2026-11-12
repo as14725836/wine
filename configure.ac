@@ -679,6 +679,7 @@ AC_CHECK_HEADERS(\
 	linux/cdrom.h \
 	linux/filter.h \
 	linux/fs.h \
+	linux/futex.h \
 	linux/hdreg.h \
 	linux/hidraw.h \
 	linux/input.h \
@@ -714,6 +715,7 @@ AC_CHECK_HEADERS(\
 	sys/cdio.h \
 	sys/epoll.h \
 	sys/event.h \
+	sys/eventfd.h \
 	sys/extattr.h \
 	sys/filio.h \
 	sys/ipc.h \
