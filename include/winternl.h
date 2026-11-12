@@ -2013,6 +2013,7 @@ typedef enum _PROCESSINFOCLASS {
     ProcessAvailableCpus = 117,
     MaxProcessInfoClass,
 #ifdef __WINESRC__
+    ProcessWineUnixPid = 1001,
     ProcessWineMakeProcessSystem = 1000,
     ProcessWineGrantAdminToken = 1002,
 #endif

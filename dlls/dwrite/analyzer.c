@@ -377,7 +377,7 @@ system_fallback_config[] =
     { "FF00-FFEF",              L"Noto Sans CJK KR", L"ko" },
     { "FF00-FFEF",              L"Noto Sans CJK JP" },
 
-    { "1F800-1F8FF",            L"Noto Sans Symbols2, Noto Sans Symbols 2" },
+    { "1F300-1F8FF",            L"Noto Sans Symbols2, Noto Sans Symbols 2, Noto Emoji" },
 };
 
 struct text_source_context
