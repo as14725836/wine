@@ -30,6 +30,14 @@ on:
       - master
   workflow_dispatch:
     inputs:
+      build_type:
+        description: '选择构建类型'
+        required: false
+        default: 'wine-wow64'
+        type: choice
+        options:
+          - wine-wow64
+
       enable_gstreamer:
         description: '启用 GStreamer（winegstreamer）'
         required: false
@@ -55,8 +63,10 @@ on:
         type: string
 
 env:
-  BUILD_NAME: wine-termux-wow64
   PREFIX: /tmp/wine-install
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -72,6 +82,32 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # --------------------------------------------------------
+      # 包名 / 版本变量（对齐 termux-glibc-wine.yml 的命名与发布）
+      # --------------------------------------------------------
+
+      - name: 生成 Wine 包名与版本变量
+        id: wine_meta
+        run: |
+          set -e
+          WINE_VERSION_ACTUAL="$(sed 's/^Wine version //' VERSION 2>/dev/null || echo latest)"
+          COMMIT_HASH="$(git rev-parse --short HEAD)"
+          SAFE_WINE_BRANCH="master"
+          SAFE_WINE_VERSION="$(printf '%s' "$WINE_VERSION_ACTUAL" | tr '/' '-')"
+          BUILD_NAME="wine-${SAFE_WINE_VERSION}-${COMMIT_HASH}-${SAFE_WINE_BRANCH}-wow64"
+
+          echo "BUILD_NAME=$BUILD_NAME" >> "$GITHUB_ENV"
+          echo "WINE_VERSION_ACTUAL=$WINE_VERSION_ACTUAL" >> "$GITHUB_ENV"
+          echo "SAFE_WINE_BRANCH=$SAFE_WINE_BRANCH" >> "$GITHUB_ENV"
+          echo "SAFE_WINE_VERSION=$SAFE_WINE_VERSION" >> "$GITHUB_ENV"
+          echo "build_name=$BUILD_NAME" >> "$GITHUB_OUTPUT"
+          echo "safe_wine_branch=$SAFE_WINE_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "safe_wine_version=$SAFE_WINE_VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "Wine version: $WINE_VERSION_ACTUAL"
+          echo "Commit: $COMMIT_HASH"
+          echo "构建名称: $BUILD_NAME"
 
       # --------------------------------------------------------
       # 宿主编译依赖
@@ -358,26 +394,81 @@ jobs:
       # 安装 & 打包
       # --------------------------------------------------------
 
+      # ========================================================
+      # Package / Release（命名与发布对齐 termux-glibc-wine.yml）
+      # ========================================================
+
       - name: 安装
         run: make -C build-wow64 install
 
-      - name: 创建压缩包
+      - name: 准备 Wine 打包
         run: |
           set -e
-          mkdir -p wine-package
-          cp -a "${PREFIX}" "wine-package/${BUILD_NAME}"
+          PACKAGE_NAME="${BUILD_NAME}"
+          mkdir -p "wine-package/$PACKAGE_NAME"
+          cp -a "${PREFIX}/." "wine-package/$PACKAGE_NAME/"
+
+      - name: 创建 Wine 压缩包
+        run: |
+          set -e
+          PACKAGE_NAME="${BUILD_NAME}"
           tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 \
               --numeric-owner -I 'xz -T0 -9e' \
-              -cf "${BUILD_NAME}.tar.xz" -C wine-package "${BUILD_NAME}"
-          sha256sum "${BUILD_NAME}.tar.xz" > checksums.txt
-          ls -lh "${BUILD_NAME}.tar.xz"
+              -cf "$PACKAGE_NAME.tar.xz" -C wine-package "$PACKAGE_NAME"
+          ls -lh "$PACKAGE_NAME.tar.xz"
+
+      - name: Generate checksums
+        run: |
+          sha256sum *.tar.xz > checksums.txt
           cat checksums.txt
 
-      - name: Upload artifact
+      - name: Upload Wine WoW64 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.BUILD_NAME }}
+          name: Wine-${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }}-${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }}-WoW64
           path: |
             ${{ github.workspace }}/*.tar.xz
             ${{ github.workspace }}/checksums.txt
           retention-days: 30
+
+      - name: 发布 Wine 到 GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: >
+          github.event_name == 'workflow_dispatch'
+          &&
+          github.event.inputs.build_type == 'wine-wow64'
+        with:
+          tag_name: wine-${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }}-${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }}-wow64
+          name: Wine ${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }} ${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }} (WOW64 with Vulkan & GStreamer for Termux)
+          body: |
+            # Wine WOW64 - Termux
+
+            ## 版本信息
+
+            - Wine 分支: `${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }}`
+            - Wine 版本: `${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }}`
+            - Build name: `${{ steps.wine_meta.outputs.build_name }}`
+            - 架构: True WOW64
+            - 平台: Termux / Android
+            - Vulkan: Enabled
+            - OpenGL: Enabled
+            - GStreamer: Enabled
+            - FFmpeg / winedmo: Enabled
+            - 中文环境: Enabled
+
+            ## 编译优化
+
+            - GCC O2
+            - Function sections
+            - Data sections
+            - Linker garbage collection
+            - As-needed linking
+
+            ## 运行时资源
+
+            Wine runtime 所需的 `share/wine` 等目录保持不变。
+          files: |
+            ${{ github.workspace }}/${{ steps.wine_meta.outputs.build_name }}.tar.xz
+            ${{ github.workspace }}/checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
