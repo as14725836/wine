@@ -273,6 +273,7 @@ struct x11drv_client_surface
     Colormap colormap;
     Window window;
     RECT rect;
+    BOOL raw;
 
     HDC hdc_src;
     HDC hdc_dst;
@@ -475,8 +476,9 @@ static int visual_class_alloc( int class )
     return class == PseudoColor || class == GrayScale || class == DirectColor ? AllocAll : AllocNone;
 }
 
-Window x11drv_client_surface_create( HWND hwnd, int format, struct client_surface **client )
+Window x11drv_client_surface_create( HWND hwnd, BOOL raw, int format, struct client_surface **client )
 {
+    UINT dpi = raw ? NtUserGetWinMonitorDpi( hwnd, MDT_WINE_RAW_DPI ) : NtUserGetDpiForWindow( hwnd );
     struct x11drv_client_surface *surface;
     XVisualInfo visual = default_visual;
     Colormap colormap;
@@ -489,8 +491,9 @@ Window x11drv_client_surface_create( HWND hwnd, int format, struct client_surfac
 
     if (!(surface = client_surface_create( sizeof(*surface), &x11drv_client_surface_funcs, hwnd ))) goto failed;
     surface->colormap = colormap;
+    surface->raw = raw;
 
-    if (!get_surface_rect( hwnd, &surface->rect, NtUserGetDpiForWindow( hwnd ) )) goto failed;
+    if (!get_surface_rect( hwnd, &surface->rect, dpi )) goto failed;
     if (!(surface->window = create_client_window( hwnd, surface->rect, &visual, colormap ))) goto failed;
 
     TRACE( "Created %s for client window %lx\n", debugstr_client_surface( &surface->client ), surface->window );

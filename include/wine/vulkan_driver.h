@@ -213,10 +213,9 @@ struct vulkan_device
 #undef USE_VK_FUNC
 
     uint64_t queue_count;
-    struct vulkan_queue queues[];
+    struct vulkan_queue *queues;
+    VkQueueFamilyProperties *queue_props;
 };
-
-C_ASSERT( sizeof(struct vulkan_device) == offsetof(struct vulkan_device, queues[0]) );
 
 static inline struct vulkan_device *vulkan_device_from_handle( VkDevice handle )
 {
@@ -322,6 +321,7 @@ struct vulkan_funcs
     PFN_vkGetDeviceQueue2 p_vkGetDeviceQueue2;
     PFN_vkGetFenceWin32HandleKHR p_vkGetFenceWin32HandleKHR;
     PFN_vkGetInstanceProcAddr p_vkGetInstanceProcAddr;
+    PFN_vkGetSwapchainImagesKHR p_vkGetSwapchainImagesKHR;
     PFN_vkGetMemoryWin32HandleKHR p_vkGetMemoryWin32HandleKHR;
     PFN_vkGetMemoryWin32HandlePropertiesKHR p_vkGetMemoryWin32HandlePropertiesKHR;
     PFN_vkGetPhysicalDeviceExternalBufferProperties p_vkGetPhysicalDeviceExternalBufferProperties;
@@ -357,7 +357,7 @@ struct vulkan_funcs
 struct client_surface;
 struct vulkan_driver_funcs
 {
-    VkResult (*p_vulkan_surface_create)(HWND, const struct vulkan_instance *, VkSurfaceKHR *, struct client_surface **);
+    VkResult (*p_vulkan_surface_create)(HWND, BOOL raw, const struct vulkan_instance *, VkSurfaceKHR *, struct client_surface **);
     VkBool32 (*p_get_physical_device_presentation_support)(struct vulkan_physical_device *, uint32_t);
     void (*p_map_instance_extensions)( struct vulkan_instance_extensions *extensions );
     void (*p_map_device_extensions)( struct vulkan_device_extensions *extensions );
