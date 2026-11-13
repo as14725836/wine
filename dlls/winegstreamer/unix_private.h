@@ -30,6 +30,11 @@
 #include <gst/gst.h>
 #include <gst/audio/audio.h>
 
+#include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+
 /* unixlib.c */
 
 GST_DEBUG_CATEGORY_EXTERN(wine);

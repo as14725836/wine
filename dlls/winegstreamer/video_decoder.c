@@ -36,6 +36,8 @@
 WINE_DEFAULT_DEBUG_CHANNEL(mfplat);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
+extern const GUID MFVideoFormat_theora;
+
 struct subtype_info
 {
     const GUID *subtype;
@@ -1008,7 +1010,10 @@ static HRESULT WINAPI transform_ProcessOutput(IMFTransform *iface, DWORD flags, 
             duration = MulDiv(10000000, (UINT32)frame_rate, frame_rate >> 32);
         }
 
-        if (!preserve_timestamps)
+        if (FAILED(hr = IMFMediaType_GetGUID(decoder->input_type, &MF_MT_SUBTYPE, &subtype)))
+            return hr;
+
+        if (!preserve_timestamps && !IsEqualGUID(&subtype, &MFVideoFormat_theora))
         {
             if (FAILED(IMFSample_SetSampleTime(sample, decoder->sample_time)))
                 WARN("Failed to set sample time\n");
@@ -1494,6 +1499,8 @@ static HRESULT WINAPI media_object_ProcessOutput(IMediaObject *iface, DWORD flag
         hr = S_FALSE;
     }
 
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+        return S_FALSE;
     return hr;
 }
 
@@ -1804,6 +1811,9 @@ static const GUID *const wmv_decoder_input_types[] =
     &MEDIASUBTYPE_WVC1,
     &MEDIASUBTYPE_WMV3,
     &MEDIASUBTYPE_VC1S,
+    &MFVideoFormat_theora,
+    &MFVideoFormat_AV1,
+    &MFVideoFormat_VP90,
 };
 static const GUID *const wmv_decoder_output_types[] =
 {

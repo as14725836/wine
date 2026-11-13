@@ -32,12 +32,15 @@
 WINE_DEFAULT_DEBUG_CHANNEL(wmadec);
 WINE_DECLARE_DEBUG_CHANNEL(winediag);
 
+extern const GUID MFAudioFormat_XMAudio2;
+
 static const GUID *const wma_decoder_input_types[] =
 {
     &MEDIASUBTYPE_MSAUDIO1,
     &MFAudioFormat_WMAudioV8,
     &MFAudioFormat_WMAudioV9,
     &MFAudioFormat_WMAudio_Lossless,
+    &MFAudioFormat_XMAudio2,
 };
 static const GUID *const wma_decoder_output_types[] =
 {
@@ -525,7 +528,18 @@ static HRESULT WINAPI transform_ProcessEvent(IMFTransform *iface, DWORD id, IMFM
 
 static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
-    FIXME("iface %p, message %#x, param %p stub!\n", iface, message, (void *)param);
+    struct wma_decoder *decoder = impl_from_IMFTransform(iface);
+
+    TRACE("iface %p, message %#x, param %p.\n", iface, message, (void *)param);
+
+    if (!decoder->wg_transform)
+        return MF_E_TRANSFORM_TYPE_NOT_SET;
+
+    if (message == MFT_MESSAGE_COMMAND_DRAIN)
+        return wg_transform_drain(decoder->wg_transform);
+
+    FIXME("Ignoring message %#x.\n", message);
+
     return S_OK;
 }
 
@@ -1001,6 +1015,8 @@ static HRESULT WINAPI media_object_ProcessOutput(IMediaObject *iface, DWORD flag
     }
 
 
+    if (hr == MF_E_TRANSFORM_NEED_MORE_INPUT)
+        return S_FALSE;
     return hr;
 }
 

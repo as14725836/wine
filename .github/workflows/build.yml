@@ -202,7 +202,8 @@ jobs:
           rm -rf "${PCGST}"
           mkdir -p "${PCGST}"
           for pc in gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 gstreamer-video-1.0 \
-                    gstreamer-audio-1.0 gstreamer-tag-1.0 gstreamer-pbutils-1.0 gstreamer-controller-1.0; do
+                    gstreamer-audio-1.0 gstreamer-tag-1.0 gstreamer-pbutils-1.0 gstreamer-controller-1.0 \
+                    gstreamer-gl-1.0; do
             if [ -f "${DEST}/lib/pkgconfig/${pc}.pc" ]; then
               cp "${DEST}/lib/pkgconfig/${pc}.pc" "${PCGST}/${pc}.pc"
             fi
@@ -218,7 +219,7 @@ jobs:
           [ "${GSTV}" = "${GST_TAG}" ] || { echo "FATAL: 版本 ${GSTV} != 期望 ${GST_TAG}"; exit 1; }
 
           for p in gstreamer-1.0 gstreamer-base-1.0 gstreamer-app-1.0 \
-                   gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0; do
+                   gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-tag-1.0 gstreamer-gl-1.0; do
             PKG_CONFIG_LIBDIR="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
             PKG_CONFIG_PATH="${PCGST}:${HOST_LIBDIR}/pkgconfig:/usr/share/pkgconfig" \
             pkg-config --exists "$p" || { echo "FATAL: 缺 ${p}.pc"; exit 1; }

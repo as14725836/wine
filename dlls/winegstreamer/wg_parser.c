@@ -30,10 +30,13 @@
 #include <stdarg.h>
 #include <stdio.h>
 
+#define GLIB_VERSION_MIN_REQUIRED GLIB_VERSION_2_30
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/audio/audio.h>
 #include <gst/tag/tag.h>
+
+#include <gst/gl/gl.h>
 
 #include "ntstatus.h"
 #define WIN32_NO_STATUS
@@ -41,6 +44,8 @@
 #include "dshow.h"
 
 #include "unix_private.h"
+
+extern GstGLDisplay *gl_display;
 
 typedef enum
 {
@@ -66,12 +71,14 @@ struct wg_parser
 
     GstElement *container, *decodebin;
     GstBus *bus;
+    GstTaskPool *task_pool;
     GstPad *my_src;
 
     guint64 file_size, start_offset, next_offset, stop_offset;
     GstClockTime base_pts;
     guint64 next_pull_offset;
     gchar *uri;
+    gboolean is_web_scheme;
 
     pthread_t push_thread;
 
@@ -97,6 +104,10 @@ struct wg_parser
     gchar *sink_caps;
 
     struct input_cache_chunk input_cache_chunks[4];
+
+    bool use_mediaconv;
+    bool use_opengl;
+    GstContext *context;
 };
 static const unsigned int input_cache_chunk_size = 512 << 10;
 
@@ -117,6 +128,7 @@ struct wg_parser_stream
     GstMapInfo map_info;
 
     bool flushing, eos, enabled, has_tags, has_buffer, has_initial_gap, no_more_pads, get_buffer_called;
+    bool fix_align;
 
     uint64_t duration;
     gchar *tags[WG_PARSER_TAG_COUNT];
@@ -293,6 +305,7 @@ static NTSTATUS wg_parser_stream_disable(void *args)
         stream->desired_caps = NULL;
     }
     pthread_mutex_unlock(&parser->mutex);
+    pthread_cond_signal(&stream->event_cond);
     pthread_cond_signal(&stream->event_empty_cond);
     return S_OK;
 }
@@ -543,6 +556,19 @@ static gboolean autoplug_continue_cb(GstElement * decodebin, GstPad *pad, GstCap
     return !caps_is_compressed(caps);
 }
 
+gboolean caps_detect_h264(GstCapsFeatures *features, GstStructure *structure, gpointer user_data)
+{
+    const char *cap_name = gst_structure_get_name(structure);
+
+    if (!strcmp(cap_name, "video/x-h264"))
+    {
+        touch_h264_used_tag();
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
 static GstAutoplugSelectResult autoplug_select_cb(GstElement *bin, GstPad *pad,
         GstCaps *caps, GstElementFactory *fact, gpointer user)
 {
@@ -552,6 +578,10 @@ static GstAutoplugSelectResult autoplug_select_cb(GstElement *bin, GstPad *pad,
 
     GST_INFO("Using \"%s\".", name);
 
+    gst_caps_foreach(caps, caps_detect_h264, NULL);
+
+    if (parser->error)
+        return GST_AUTOPLUG_SELECT_SKIP;
     if (strstr(name, "Player protection"))
     {
         GST_WARNING("Blacklisted a/52 decoder because it only works in Totem.");
@@ -560,6 +590,11 @@ static GstAutoplugSelectResult autoplug_select_cb(GstElement *bin, GstPad *pad,
     if (!strcmp(name, "Fluendo Hardware Accelerated Video Decoder"))
     {
         GST_WARNING("Disabled video acceleration since it breaks in wine.");
+        return GST_AUTOPLUG_SELECT_SKIP;
+    }
+    if (!strcmp(name, "Proton video converter") && !parser->use_mediaconv)
+    {
+        GST_INFO("Skipping \"Proton video converter\".");
         return GST_AUTOPLUG_SELECT_SKIP;
     }
 
@@ -602,6 +637,34 @@ static gboolean autoplug_query_cb(GstElement *bin, GstPad *child,
     return FALSE;
 }
 
+static gint find_videoconv_cb(gconstpointer a, gconstpointer b)
+{
+    const GValue *val_a = a, *val_b = b;
+    GstElementFactory *factory_a = g_value_get_object(val_a), *factory_b = g_value_get_object(val_b);
+    const char *name_a = gst_element_factory_get_longname(factory_a), *name_b = gst_element_factory_get_longname(factory_b);
+
+    if (!strcmp(name_a, "Proton video converter"))
+        return -1;
+    if (!strcmp(name_b, "Proton video converter"))
+        return 1;
+    return 0;
+}
+
+static GValueArray *autoplug_sort_cb(GstElement *bin, GstPad *pad,
+        GstCaps *caps, GValueArray *factories, gpointer user)
+{
+    struct wg_parser *parser = user;
+    GValueArray *ret = g_value_array_copy(factories);
+
+    if (!parser->use_mediaconv)
+        return NULL;
+
+    GST_DEBUG("parser %p.", parser);
+
+    g_value_array_sort(ret, find_videoconv_cb);
+    return ret;
+}
+
 static void no_more_pads_cb(GstElement *element, gpointer user)
 {
     struct wg_parser *parser = user;
@@ -613,11 +676,35 @@ static void no_more_pads_cb(GstElement *element, gpointer user)
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&parser->init_cond);
 }
+static void set_dav1d_n_threads(GstElement *element)
+{
+    GstElementFactory *factory = NULL;
+    const char *name = NULL;
+
+    if (element)
+        factory = gst_element_get_factory(element);
+
+    if (factory)
+        name = gst_element_factory_get_longname(factory);
+
+    if (name && strstr(name, "Dav1d"))
+    {
+#if defined(__x86_64__)
+        GST_DEBUG("%s found, setting n-threads to 4.", name);
+        g_object_set(element, "n-threads", G_GINT64_CONSTANT(4), NULL);
+#else
+        GST_DEBUG("%s found, setting n-threads to 1.", name);
+        g_object_set(element, "n-threads", G_GINT64_CONSTANT(1), NULL);
+#endif
+    }
+}
 
 static void deep_element_added_cb(GstBin *self, GstBin *sub_bin, GstElement *element, gpointer user)
 {
     if (element)
         set_max_threads(element);
+
+    set_dav1d_n_threads(element);
 }
 
 static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
@@ -700,11 +787,41 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
 
         case GST_EVENT_CAPS:
         {
+            GstStructure *structure;
+            GstVideoInfo video_info;
+            bool fix_nv12 = false, fix_yv12 = false;
             GstCaps *caps;
 
             gst_event_parse_caps(event, &caps);
+            structure = gst_caps_get_structure(caps, 0);
+            if (gst_structure_has_name(structure, "video/x-raw") && gst_video_info_from_caps(&video_info, caps))
+            {
+                fix_nv12 = video_info.stride[0] > GST_ROUND_UP_2(video_info.width)
+                        && GST_VIDEO_INFO_FORMAT(&video_info) == GST_VIDEO_FORMAT_NV12;
+                if (fix_nv12 && GST_VIDEO_INFO_IS_INTERLACED(&video_info))
+                {
+                    GST_WARNING("NV12 alignment fix is not implemented for interlaced NV12.\n");
+                    fix_nv12 = false;
+                }
+                if (fix_nv12)
+                    GST_INFO("Enabling the NV12 alignment fix.");
+
+                fix_yv12 = (GST_VIDEO_INFO_FORMAT(&video_info) == GST_VIDEO_FORMAT_YV12
+                        || GST_VIDEO_INFO_FORMAT(&video_info) == GST_VIDEO_FORMAT_I420)
+                        && (video_info.stride[1] > GST_ROUND_UP_2(video_info.width/2));
+                if (fix_yv12 && GST_VIDEO_INFO_IS_INTERLACED(&video_info))
+                {
+                    GST_WARNING("YV12/I420 alignment fix is not implemented for interlaced YV12/I420.\n");
+                    fix_yv12 = false;
+                }
+                if (fix_yv12)
+                    GST_INFO("Enabling the YV12/I420 alignment fix.");
+
+            }
+
             pthread_mutex_lock(&parser->mutex);
             stream->current_caps = gst_caps_ref(caps);
+            stream->fix_align = fix_nv12 || fix_yv12;
             pthread_mutex_unlock(&parser->mutex);
             pthread_cond_signal(&parser->init_cond);
             break;
@@ -731,6 +848,89 @@ static gboolean sink_event_cb(GstPad *pad, GstObject *parent, GstEvent *event)
     }
     gst_event_unref(event);
     return TRUE;
+}
+
+static void buffer_fix_align(GstBuffer *buffer, GstCaps *caps)
+{
+    GstVideoInfo src_info, dst_info;
+    gint i, aligned_height;
+    GstMapInfo map_info;
+    guint8 *dst, *src;
+
+    if (!gst_video_info_from_caps(&src_info, caps))
+    {
+        GST_ERROR("Failed to get video info from %"GST_PTR_FORMAT, caps);
+        return;
+    }
+    if (!gst_buffer_map(buffer, &map_info, GST_MAP_READWRITE))
+    {
+        GST_ERROR("Failed to map buffer.");
+        return;
+    }
+
+    dst_info = src_info;
+
+    if (GST_VIDEO_INFO_FORMAT(&src_info) == GST_VIDEO_FORMAT_NV12)
+    {
+        aligned_height = GST_ROUND_UP_2(dst_info.height);
+        dst_info.stride[0] = GST_ROUND_UP_2(dst_info.width);
+        dst_info.stride[1] = dst_info.stride[0];
+        dst_info.offset[0] = 0;
+        dst_info.offset[1] = dst_info.stride[0] * aligned_height;
+        dst_info.size = dst_info.offset[1] + dst_info.stride[0] * aligned_height / 2;
+
+        dst = src = map_info.data;
+        for (i = 0; i < aligned_height; ++i)
+        {
+            memmove(dst, src, dst_info.stride[0]);
+            dst += dst_info.stride[0];
+            src += src_info.stride[0];
+        }
+
+        dst = map_info.data + dst_info.offset[1];
+        src = map_info.data + src_info.offset[1];
+        for (i = 0; i < aligned_height / 2; ++i)
+        {
+            memmove(dst, src, dst_info.stride[1]);
+            dst += dst_info.stride[1];
+            src += src_info.stride[1];
+        }
+    }
+    else if (GST_VIDEO_INFO_FORMAT(&src_info) == GST_VIDEO_FORMAT_I420
+            || GST_VIDEO_INFO_FORMAT(&src_info) == GST_VIDEO_FORMAT_YV12)
+    {
+        gint p, plane1, plane2;
+
+        plane1 = (src_info.offset[2] > src_info.offset[1]) ? 1 : 2;
+        plane2 = 3 - plane1;
+        aligned_height = (src_info.offset[plane2] - src_info.offset[plane1]) / src_info.stride[plane1];
+
+        dst_info.stride[2] = dst_info.stride[1] = GST_ROUND_UP_2(dst_info.width / 2);
+        dst_info.offset[plane2] = dst_info.offset[plane1] + dst_info.stride[plane1] * aligned_height;
+        dst_info.size = dst_info.offset[plane2] + dst_info.stride[plane2] * aligned_height;
+
+        assert(dst_info.size <= src_info.size);
+
+        for (p = 1; p <= 2; ++p)
+        {
+            dst = map_info.data + dst_info.offset[p];
+            src = map_info.data + src_info.offset[p];
+            for (i = 0; i < aligned_height; ++i)
+            {
+                memmove(dst, src, dst_info.stride[p]);
+                dst += dst_info.stride[p];
+                src += src_info.stride[p];
+            }
+        }
+    }
+    else
+    {
+        /* should never happen */
+        assert(0);
+    }
+
+    gst_buffer_unmap(buffer, &map_info);
+    gst_buffer_set_size(buffer, dst_info.size);
 }
 
 static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *buffer)
@@ -780,6 +980,9 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
         gst_buffer_unref(buffer);
         return GST_FLOW_FLUSHING;
     }
+
+    if (stream->fix_align)
+        buffer_fix_align(buffer, stream->current_caps);
 
     if (!gst_buffer_map(buffer, &stream->map_info, GST_MAP_READ))
     {
@@ -911,8 +1114,14 @@ static struct wg_parser_stream *create_stream(struct wg_parser *parser)
 
 static void free_stream(struct wg_parser_stream *stream)
 {
+    GstPad *peer;
     unsigned int i;
 
+    if ((peer = gst_pad_get_peer(stream->my_sink)))
+    {
+        gst_pad_unlink(peer, stream->my_sink);
+        gst_object_unref(peer);
+    }
     gst_object_unref(stream->my_sink);
 
     if (stream->buffer)
@@ -950,7 +1159,32 @@ static bool stream_create_post_processing_elements(GstPad *pad, struct wg_parser
     name = gst_structure_get_name(gst_caps_get_structure(caps, 0));
     gst_caps_unref(caps);
 
-    if (!strcmp(name, "video/x-raw"))
+    if (!strcmp(name, "video/x-raw") && parser->use_opengl)
+    {
+        if (!(element = create_element("glupload", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        if (!(element = create_element("glcolorconvert", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        if (!(element = create_element("glvideoflip", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        stream->flip = element;
+        if (!(element = create_element("gldeinterlace", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        if (!(element = create_element("glcolorconvert", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+        if (!(element = create_element("gldownload", "base"))
+                || !append_element(parser->container, element, &first, &last))
+            return false;
+
+        if (!link_src_to_element(pad, first) || !link_element_to_sink(last, stream->my_sink))
+            return false;
+    }
+    else if (!strcmp(name, "video/x-raw"))
     {
         /* Hack: Flatten colorimetry to defaults (Proton media-converter). */
         if (!(element = create_element("capssetter", "good"))
@@ -1354,6 +1588,13 @@ static gboolean src_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
             }
             return FALSE;
 
+        case GST_QUERY_LATENCY:
+        {
+            const char *live = getenv("WINE_ENABLE_GST_LIVE_LATENCY");
+            gst_query_set_latency(query, live && !strcmp(live, "1"), 0, 0);
+            return TRUE;
+        }
+
         default:
             GST_WARNING("Unhandled query type %s.", GST_QUERY_TYPE_NAME(query));
             return FALSE;
@@ -1458,6 +1699,7 @@ static gboolean src_activate_mode_cb(GstPad *pad, GstObject *parent, GstPadMode 
 static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer user)
 {
     struct wg_parser *parser = user;
+    const GstStructure *structure;
     gchar *dbg_info = NULL;
     GError *err = NULL;
 
@@ -1497,6 +1739,42 @@ static GstBusSyncReply bus_handler_cb(GstBus *bus, GstMessage *msg, gpointer use
         pthread_mutex_unlock(&parser->mutex);
         pthread_cond_signal(&parser->init_cond);
         break;
+
+    case GST_MESSAGE_ELEMENT:
+        structure = gst_message_get_structure(msg);
+        if (gst_structure_has_name(structure, "missing-plugin"))
+        {
+            pthread_mutex_lock(&parser->mutex);
+            if (!parser->use_mediaconv)
+            {
+                parser->error = true;
+                pthread_cond_signal(&parser->init_cond);
+                if (parser->is_web_scheme)
+                    GST_WARNING("Autoplugged element failed to initialise. Giving up as we're using a web scheme.");
+                else
+                    GST_WARNING("Autoplugged element failed to initialise, trying again with protonvideoconvert.");
+            }
+            pthread_mutex_unlock(&parser->mutex);
+        }
+        break;
+
+    case GST_MESSAGE_STREAM_STATUS:
+    {
+        GstStreamStatusType type;
+        GstElement *element;
+        const GValue *val;
+        GstTask *task;
+
+        gst_message_parse_stream_status(msg, &type, &element);
+        val = gst_message_get_stream_status_object(msg);
+        GST_DEBUG("parser %p, message %s, type %u, value %p (%s).", parser, GST_MESSAGE_TYPE_NAME(msg), type, val, G_VALUE_TYPE_NAME(val));
+
+        if (G_VALUE_TYPE(val) == GST_TYPE_TASK && (task = g_value_get_object(val))
+                && type == GST_STREAM_STATUS_TYPE_CREATE)
+            gst_task_set_pool(task, parser->task_pool);
+
+        break;
+    }
 
     default:
         break;
@@ -1663,6 +1941,8 @@ static NTSTATUS wg_parser_connect(void *args)
     unsigned int i;
     int ret;
 
+    bool use_mediaconv = false;
+
     parser->file_size = params->file_size;
     parser->sink_connected = true;
     if (uri)
@@ -1683,6 +1963,8 @@ static NTSTATUS wg_parser_connect(void *args)
 
     parser->container = gst_bin_new(NULL);
     gst_element_set_bus(parser->container, parser->bus);
+    if (parser->context)
+        gst_element_set_context(parser->container, parser->context);
 
     parser->my_src = gst_pad_new_from_static_template(&src_template, "quartz-src");
     gst_pad_set_getrange_function(parser->my_src, src_getrange_cb);
@@ -1700,9 +1982,16 @@ static NTSTATUS wg_parser_connect(void *args)
 
     gst_element_set_state(parser->container, GST_STATE_PAUSED);
     ret = gst_element_get_state(parser->container, NULL, NULL, -1);
+
     if (ret == GST_STATE_CHANGE_FAILURE)
     {
-        GST_ERROR("Failed to play stream.");
+        if (!parser->use_mediaconv && !parser->is_web_scheme)
+        {
+            GST_WARNING("Failed to play media, trying again with protonvideoconvert.");
+            use_mediaconv = true;
+        }
+        else
+            GST_ERROR("Failed to play stream.");
         goto out;
     }
 
@@ -1712,6 +2001,8 @@ static NTSTATUS wg_parser_connect(void *args)
         pthread_cond_wait(&parser->init_cond, &parser->mutex);
     if (parser->error)
     {
+        if (!parser->use_mediaconv && !parser->is_web_scheme)
+            use_mediaconv = true;
         pthread_mutex_unlock(&parser->mutex);
         goto out;
     }
@@ -1828,6 +2119,15 @@ out:
     pthread_mutex_unlock(&parser->mutex);
     pthread_cond_signal(&parser->read_cond);
 
+    if (use_mediaconv)
+    {
+        HRESULT hr;
+        parser->use_mediaconv = true;
+        hr = wg_parser_connect(args);
+        parser->use_mediaconv = false;
+        return hr;
+    }
+
     return E_FAIL;
 }
 
@@ -1876,24 +2176,36 @@ static NTSTATUS wg_parser_disconnect(void *args)
         parser->input_cache_chunks[i].data = NULL;
     }
 
+    gst_task_pool_cleanup(parser->task_pool);
     return S_OK;
 }
 
 static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
 {
     GstElement *element;
+    const char *type;
 
-    if (!(element = create_element("decodebin", "base")))
+    parser->is_web_scheme = parser->uri && (!strncmp(parser->uri, "http://", 7) || !strncmp(parser->uri, "https://", 8) ||
+                            !strncmp(parser->uri, "rtsp://", 7));
+    type = parser->is_web_scheme ? "uridecodebin" : "decodebin";
+    if (!(element = create_element(type, "base")))
         return FALSE;
+    GST_INFO("creating %s element for uri \"%s\"", type, parser->uri ? parser->uri : "(null)");
 
     gst_bin_add(GST_BIN(parser->container), element);
     parser->decodebin = element;
+
+    if (!strcmp(type, "decodebin"))
+        g_object_set(element, "max-size-bytes", G_MAXUINT, NULL);
+    else
+        g_object_set(element, "uri", parser->uri, NULL);
 
     g_signal_connect(element, "pad-added", G_CALLBACK(pad_added_cb), parser);
     g_signal_connect(element, "pad-removed", G_CALLBACK(pad_removed_cb), parser);
     g_signal_connect(element, "autoplug-continue", G_CALLBACK(autoplug_continue_cb), parser);
     g_signal_connect(element, "autoplug-select", G_CALLBACK(autoplug_select_cb), parser);
     g_signal_connect(element, "autoplug-query", G_CALLBACK(autoplug_query_cb), parser);
+    g_signal_connect(element, "autoplug-sort", G_CALLBACK(autoplug_sort_cb), parser);
     g_signal_connect(element, "no-more-pads", G_CALLBACK(no_more_pads_cb), parser);
     g_signal_connect(element, "deep-element-added", G_CALLBACK(deep_element_added_cb), parser);
 
@@ -1901,7 +2213,7 @@ static BOOL decodebin_parser_init_gst(struct wg_parser *parser)
     parser->no_more_pads = false;
     pthread_mutex_unlock(&parser->mutex);
 
-    if (!link_src_to_element(parser->my_src, element))
+    if (!strcmp(type, "decodebin") && !link_src_to_element(parser->my_src, element))
         return FALSE;
 
     return TRUE;
@@ -1912,9 +2224,26 @@ static NTSTATUS wg_parser_create(void *args)
 {
     struct wg_parser_create_params *params = args;
     struct wg_parser *parser;
+    GError *error;
 
     if (!(parser = calloc(1, sizeof(*parser))))
         return E_OUTOFMEMORY;
+    if ((parser->use_opengl = !!(params->flags & WG_PARSER_CREATE_FLAG_USE_OPENGL) && gl_display))
+    {
+        if ((parser->context = gst_context_new(GST_GL_DISPLAY_CONTEXT_TYPE, false)))
+            gst_context_set_gl_display(parser->context, gl_display);
+        else
+        {
+            GST_ERROR("Failed to create parser context");
+            parser->use_opengl = FALSE;
+        }
+    }
+    if (!(parser->task_pool = wg_task_pool_new()))
+    {
+        free(parser);
+        return E_OUTOFMEMORY;
+    }
+    gst_task_pool_prepare(parser->task_pool, &error);
 
     pthread_mutex_init(&parser->mutex, NULL);
     pthread_cond_init(&parser->init_cond, NULL);
@@ -1939,6 +2268,10 @@ static NTSTATUS wg_parser_destroy(void *args)
         gst_bus_set_sync_handler(parser->bus, NULL, NULL, NULL);
         gst_object_unref(parser->bus);
     }
+    gst_object_unref(parser->task_pool);
+
+    if (parser->context)
+        gst_context_unref(parser->context);
 
     pthread_mutex_destroy(&parser->mutex);
     pthread_cond_destroy(&parser->init_cond);
