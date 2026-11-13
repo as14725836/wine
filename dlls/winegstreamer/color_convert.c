@@ -1051,5 +1051,7 @@ HRESULT WINAPI winegstreamer_create_color_converter(IMFTransform **out)
     if (FAILED(hr = color_convert_create(NULL, &unknown)))
         return hr;
 
-    return IUnknown_QueryInterface(unknown, &IID_IMFTransform, (void**)out);
+    hr = IUnknown_QueryInterface(unknown, &IID_IMFTransform, (void **)out);
+    IUnknown_Release(unknown);
+    return hr;
 }

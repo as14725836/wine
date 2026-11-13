@@ -17,10 +17,20 @@
  */
 
 #include "gst_private.h"
+#include <stdlib.h>
 #include "initguid.h"
 #include "wmsdk.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(wmvcore);
+
+static bool wm_reader_use_opengl(bool read_compressed)
+{
+    const char *env = getenv("WINE_GST_USE_OPENGL");
+
+    if (env)
+        return atoi(env) > 0;
+    return sizeof(void *) == 4 && !read_compressed;
+}
 
 struct wm_stream
 {
@@ -1488,18 +1498,18 @@ static void release_stream_allocators(struct wm_reader *reader)
             IWMReaderAllocatorEx_Release(stream->stream_allocator);
         stream->stream_allocator = NULL;
     }
-
-    free(reader->streams);
-    reader->streams = NULL;
 }
 
 static HRESULT init_stream(struct wm_reader *reader)
 {
+    UINT32 flags = WG_PARSER_CREATE_FLAG_NONE;
     wg_parser_t wg_parser;
     HRESULT hr;
     WORD i;
 
-    if (!(wg_parser = wg_parser_create(WG_PARSER_CREATE_FLAG_USE_OPENGL)))
+    if (wm_reader_use_opengl(false))
+        flags |= WG_PARSER_CREATE_FLAG_USE_OPENGL;
+    if (!(wg_parser = wg_parser_create(flags)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1564,13 +1574,6 @@ static HRESULT init_stream(struct wm_reader *reader)
             if (stream->format.u.video.height > 0)
                 stream->format.u.video.height = -stream->format.u.video.height;
 
-            {
-                /* HACK: Persona 4 Golden tries to read compressed samples, and
-                 * then autoplug them via quartz to a filter that only accepts
-                 * BGRx. This is not trivial to implement. Return BGRx from the
-                 * wmvcore reader for now. */
-
-            }
         }
         wg_parser_stream_enable(stream->wg_stream, &stream->format);
     }
@@ -1612,9 +1615,15 @@ out_destroy_parser:
 
 static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
 {
+    UINT32 flags = WG_PARSER_CREATE_FLAG_NONE;
     wg_parser_t wg_parser;
     HRESULT hr;
     WORD i;
+
+    if (read_compressed)
+        flags |= WG_PARSER_CREATE_FLAG_OUTPUT_COMPRESSED;
+    if (wm_reader_use_opengl(read_compressed))
+        flags |= WG_PARSER_CREATE_FLAG_USE_OPENGL;
 
     ReleaseSemaphore(reader->read_sem, 1, NULL);
 
@@ -1634,8 +1643,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
     wg_parser_destroy(reader->wg_parser);
     reader->wg_parser = 0;
 
-    if (!(wg_parser = wg_parser_create(read_compressed ? WG_PARSER_CREATE_FLAG_OUTPUT_COMPRESSED
-            : WG_PARSER_CREATE_FLAG_USE_OPENGL)))
+    if (!(wg_parser = wg_parser_create(flags)))
         return E_OUTOFMEMORY;
 
     reader->wg_parser = wg_parser;
@@ -1665,7 +1673,7 @@ static HRESULT reinit_stream(struct wm_reader *reader, bool read_compressed)
         struct wm_stream *stream = &reader->streams[i];
         struct wg_format format;
 
-        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, reader->stream_count - i - 1);
+        stream->wg_stream = wg_parser_get_stream(reader->wg_parser, i);
         stream->reader = reader;
         wg_parser_stream_get_current_format(stream->wg_stream, &format);
         if (stream->selection == WMT_ON)
