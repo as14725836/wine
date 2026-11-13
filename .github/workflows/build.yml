@@ -493,8 +493,6 @@ jobs:
 
       - name: 发布 Wine 到 GitHub Release
         uses: softprops/action-gh-release@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         # push 到 master 与手动 dispatch 都发布；pull_request 不发布。
         # dispatch 时仍要求 build_type 为 wine-wow64。
         if: >
