@@ -293,6 +293,10 @@ jobs:
         env:
           ENABLE_GSTREAMER: ${{ github.event.inputs.enable_gstreamer || 'true' }}
           ENABLE_FFMPEG: ${{ github.event.inputs.enable_ffmpeg || 'true' }}
+          # 必须与“下载 FFmpeg 预编译包”step 的 FFMPEG_PREFIX 保持一致；
+          # step 级 env 不跨 step 继承，缺这一行会让下面的 .pc 探测恒为假，
+          # 于是 winedmo 永远被 --without-ffmpeg 关掉。
+          FFMPEG_PREFIX: /tmp/ffmpeg
         run: |
           set -e
           export LANG=C.UTF-8
@@ -362,7 +366,6 @@ jobs:
             --with-freetype \
             --with-fontconfig \
             --with-gettext \
-            --with-winedmo \
             --with-opengl \
             --with-sdl \
             --enable-nls \
@@ -370,14 +373,12 @@ jobs:
             --disable-win16 \
             --disable-tests \
             --without-wayland \
-            --without-ldap \
             --without-capi \
             --without-oss \
             --without-cups \
             --without-dbus \
             --without-coreaudio \
             --without-gphoto \
-            --without-osmesa \
             --without-sane \
             --without-pcap \
             --without-pcsclite \
@@ -402,11 +403,36 @@ jobs:
         run: make -C build-wow64 install
 
       - name: 准备 Wine 打包
+        env:
+          ENABLE_FFMPEG: ${{ github.event.inputs.enable_ffmpeg || 'true' }}
+          FFMPEG_PREFIX: /tmp/ffmpeg
         run: |
           set -e
           PACKAGE_NAME="${BUILD_NAME}"
           mkdir -p "wine-package/$PACKAGE_NAME"
           cp -a "${PREFIX}/." "wine-package/$PACKAGE_NAME/"
+
+          # winedmo.so 通过 DT_NEEDED 依赖 libavformat/libavcodec 等（来自
+          # ${FFMPEG_PREFIX}，不装进 ${PREFIX}）。这些库设备侧不一定有，
+          # 必须随包分发，否则运行期 dlopen("winedmo.so") 失败，winedmo 会退化成
+          # 空壳（unixlib 里没有 __wine_unix_call_funcs），表现为
+          #   err:mfplat:... Unsupported demuxer, status 0xc000007a
+          # （0xc000007a 即 STATUS_PROCEDURE_NOT_FOUND）。
+          if [ "${ENABLE_FFMPEG}" = "true" ] && [ -d "${FFMPEG_PREFIX}/lib" ]; then
+            # 放 lib/ 而不是 lib/wine/：Termux 上这个包会被解到
+            # $PREFIX/glibc/wine-<ver>/，而 $PREFIX/glibc/lib 才是动态链接器
+            # 的搜索路径；lib/ 会被安装脚本并入 $PREFIX/glibc/lib。
+            LIBDIR="wine-package/$PACKAGE_NAME/lib"
+            mkdir -p "$LIBDIR"
+            # 只拷运行期 .so（含 soname symlink），跳过 .a/.la/.pc 与 pkgconfig 目录
+            shopt -s nullglob
+            for f in "${FFMPEG_PREFIX}"/lib/*.so "${FFMPEG_PREFIX}"/lib/*.so.*; do
+              cp -a "$f" "$LIBDIR/"
+            done
+            shopt -u nullglob
+            echo "打包 FFmpeg 运行库: $(ls -1 "$LIBDIR" | wc -l) 个文件"
+            ls -1 "$LIBDIR" | head -20
+          fi
 
       - name: 创建 Wine 压缩包
         run: |
