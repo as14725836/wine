@@ -457,15 +457,58 @@ jobs:
             ${{ github.workspace }}/checksums.txt
           retention-days: 30
 
-      - name: 发布 Wine 到 GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: 清理同名 Release 的旧资产
         if: >
-          github.event_name == 'workflow_dispatch'
-          &&
-          github.event.inputs.build_type == 'wine-wow64'
+          (github.event_name == 'push'
+           || (github.event_name == 'workflow_dispatch'
+               && github.event.inputs.build_type == 'wine-wow64'))
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # tag_name 固定为 wine-<branch>-<version>-wow64，而包名含短 commit，
+          # 所以每次 push 都会往同一个 Release 里新增一个 tar.xz。
+          # 这里先删掉旧资产，保证 Release 里只有本次构建的产物。
+          TAG="wine-${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }}-${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }}-wow64"
+          echo "目标 tag: $TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release 已存在，删除旧资产："
+            gh release view "$TAG" --json assets --jq '.assets[].name' | while read -r a; do
+              [ -z "$a" ] && continue
+              echo "  - $a"
+              gh release delete-asset "$TAG" "$a" --yes || echo "    删除失败（忽略）"
+            done
+
+            # tag 原先指向旧 commit；action-gh-release 不会移动已存在的 tag，
+            # 这里强制把它更新到本次构建的 commit，避免 tag 与产物不一致。
+            echo "移动 tag $TAG -> $GITHUB_SHA"
+            git config --global --add safe.directory "$GITHUB_WORKSPACE" || true
+            if ! git push --force origin "refs/tags/$TAG:refs/tags/$TAG" 2>/dev/null; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" \
+                  -f sha="$GITHUB_SHA" -F force=true >/dev/null && echo "  已通过 API 移动 tag"
+            fi
+          else
+            echo "Release 不存在，将新建"
+          fi
+
+      - name: 发布 Wine 到 GitHub Release
+        uses: softprops/action-gh-release@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # push 到 master 与手动 dispatch 都发布；pull_request 不发布。
+        # dispatch 时仍要求 build_type 为 wine-wow64。
+        if: >
+          (github.event_name == 'push'
+           || (github.event_name == 'workflow_dispatch'
+               && github.event.inputs.build_type == 'wine-wow64'))
         with:
           tag_name: wine-${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }}-${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }}-wow64
           name: Wine ${{ steps.wine_meta.outputs.safe_wine_branch || 'master' }} ${{ steps.wine_meta.outputs.safe_wine_version || 'latest' }} (WOW64 with Vulkan & GStreamer for Termux)
+          # 让 tag 指向本次构建的 commit，并把该 Release 设为 latest
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          # 覆盖同名 tag（tag 已存在时不再报错）
+          fail_on_unmatched_files: true
           body: |
             # Wine WOW64 - Termux
 
