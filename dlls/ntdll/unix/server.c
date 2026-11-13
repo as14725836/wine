@@ -81,6 +81,8 @@
 #include "wine/debug.h"
 #include "unix_private.h"
 #include "ddk/wdm.h"
+#include "esync.h"
+#include "fsync.h"
 
 WINE_DEFAULT_DEBUG_CHANNEL(server);
 WINE_DECLARE_DEBUG_CHANNEL(syscall);
@@ -1684,7 +1686,18 @@ size_t server_init_process(void)
             info_size         = reply->info_size;
             server_start_time = reply->server_start;
             supported_machines_count = wine_server_reply_size( reply ) / sizeof(*supported_machines);
-            if (reply->inproc_device)
+            if (reply->inproc_device == FSYNC_USED_BY_SERVER)
+            {
+                inproc_device_fd = FSYNC_USED_BY_SERVER;
+                fsync_init( pid );
+            }
+            else if (reply->inproc_device == ESYNC_USED_BY_SERVER)
+            {
+                int shm_fd = wine_server_receive_fd( &handle );
+                assert( handle == reply->inproc_device );
+                esync_init( shm_fd );
+            }
+            else if (reply->inproc_device)
             {
                 inproc_device_fd = wine_server_receive_fd( &handle );
                 assert( handle == reply->inproc_device );
