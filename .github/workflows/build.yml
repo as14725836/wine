@@ -325,6 +325,7 @@ jobs:
             --with-freetype \
             --with-fontconfig \
             --with-gettext \
+            --with-winedmo \
             --with-opengl \
             --with-sdl \
             --enable-nls \
