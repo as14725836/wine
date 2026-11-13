@@ -1054,7 +1054,7 @@ static HRESULT WINAPI header_info_GetAttributeByName(IWMHeaderInfo3 *iface, WORD
     {
         if (*stream_number)
         {
-            WARN("Requesting duration for stream %u, returning ASF_E_NOTFOUND.\n", *stream_number);
+            WARN("Requesting seekable attribute for stream %u, returning ASF_E_NOTFOUND.\n", *stream_number);
             return ASF_E_NOTFOUND;
         }
 
@@ -1204,7 +1204,7 @@ static HRESULT WINAPI header_info_AddCodecInfo(IWMHeaderInfo3 *iface, const WCHA
         const WCHAR *desc, WMT_CODEC_INFO_TYPE type, WORD size, BYTE *info)
 {
     FIXME("iface %p, name %s, desc %s, type %#x, size %u, info %p, stub!\n",
-            info, debugstr_w(name), debugstr_w(desc), type, size, info);
+            iface, debugstr_w(name), debugstr_w(desc), type, size, info);
     return E_NOTIMPL;
 }
 
@@ -1471,6 +1471,23 @@ static void free_stream_buffers(struct wm_reader *reader)
     }
 }
 
+static void release_stream_allocators(struct wm_reader *reader)
+{
+    unsigned int i;
+
+    for (i = 0; i < reader->stream_count; ++i)
+    {
+        struct wm_stream *stream = &reader->streams[i];
+
+        if (stream->output_allocator)
+            IWMReaderAllocatorEx_Release(stream->output_allocator);
+        stream->output_allocator = NULL;
+        if (stream->stream_allocator)
+            IWMReaderAllocatorEx_Release(stream->stream_allocator);
+        stream->stream_allocator = NULL;
+    }
+}
+
 static HRESULT init_stream(struct wm_reader *reader)
 {
     wg_parser_t wg_parser;
@@ -1668,6 +1685,7 @@ out_destroy_parser:
         reader->read_sem = NULL;
     }
     free_stream_buffers(reader);
+    release_stream_allocators(reader);
     wg_parser_destroy(reader->wg_parser);
     reader->wg_parser = 0;
 
@@ -1896,6 +1914,7 @@ static ULONG WINAPI unknown_inner_Release(IUnknown *iface)
         reader->shutdown_cs.DebugInfo->Spare[0] = 0;
         DeleteCriticalSection(&reader->shutdown_cs);
 
+        free(reader->streams);
         free(reader);
     }
 
@@ -1949,6 +1968,7 @@ static HRESULT WINAPI reader_Close(IWMSyncReader2 *iface)
     ReleaseSemaphore(reader->read_sem, 1, NULL);
 
     free_stream_buffers(reader);
+    release_stream_allocators(reader);
 
     wg_parser_disconnect(reader->wg_parser);
 
@@ -2690,7 +2710,6 @@ static HRESULT WINAPI reader_GetAllocateForOutput(IWMSyncReader2 *iface, DWORD o
         return E_INVALIDARG;
     }
 
-    stream = reader->streams + output;
     if ((*allocator = stream->output_allocator))
         IWMReaderAllocatorEx_AddRef(*allocator);
 
