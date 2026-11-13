@@ -21,40 +21,41 @@
 #ifndef __WINE_SERVER_SHM_UTILS_H
 #define __WINE_SERVER_SHM_UTILS_H
 
-#ifdef __ANDROID__
-
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
-static inline int shm_open(const char *name, int oflag, mode_t mode) {
+static inline int wine_termux_shm_open(const char *name, int oflag, mode_t mode) {
     char *tmpdir;
     char *fname;
 
     tmpdir = getenv("TMPDIR");
 
     if (!tmpdir) {
-        tmpdir = "/tmp";
+        tmpdir = "/data/data/com.termux/files/usr/tmp";
     }
 
     asprintf(&fname, "%s/%s", tmpdir, name);
     return open(fname, oflag, mode);
 }
 
-static inline int shm_unlink(const char *name) {
+static inline int wine_termux_shm_unlink(const char *name) {
     char *tmpdir;
     char *fname;
 
     tmpdir = getenv("TMPDIR");
 
     if (!tmpdir) {
-        tmpdir = "/tmp";
+        tmpdir = "/data/data/com.termux/files/usr/tmp";
     }
 
     asprintf(&fname, "%s/%s", tmpdir, name);
     return unlink(fname);
 }
 
-#endif /* __ANDROID__ */
+#define shm_open wine_termux_shm_open
+#define shm_unlink wine_termux_shm_unlink
 
 #endif /* __WINE_SERVER_SHM_UTILS_H */

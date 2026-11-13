@@ -52,9 +52,7 @@
 #define __NR_futex_waitv 449
 #endif
 
-#ifdef __ANDROID__
 #include "../android/shm_utils/shm_utils.h"
-#endif
 
 int do_fsync_cached = -1;
 
