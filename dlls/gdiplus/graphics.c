@@ -4157,18 +4157,31 @@ static GpStatus SOFTWARE_GdipDrawThinPath(GpGraphics *graphics, GpPen *pen, GpPa
     return stat;
 }
 
+static BOOL is_antialiased(const GpGraphics *graphics)
+{
+    DWORD type = GetObjectType(graphics->hdc);
+
+    /* metafiles get aliased vectors as on native; printers can't blend, and SourceCopy would also
+     * replace the uncovered pixels around the path */
+    return !graphics->printer_display && type != OBJ_METADC && type != OBJ_ENHMETADC &&
+        (graphics->smoothing == SmoothingModeHighQuality || graphics->smoothing >= SmoothingModeAntiAlias) &&
+        graphics->compmode != CompositingModeSourceCopy;
+}
+
 static GpStatus SOFTWARE_GdipDrawPath(GpGraphics *graphics, GpPen *pen, GpPath *path)
 {
     GpStatus stat;
     GpPath *wide_path;
     GpMatrix *transform=NULL;
+    GpPen hairline;
     REAL flatness=1.0;
+    BOOL thin=FALSE;
 
     /* Check if the final pen thickness in pixels is too thin. */
     if (pen->unit == UnitPixel)
     {
         if (pen->width < 1.415)
-            return SOFTWARE_GdipDrawThinPath(graphics, pen, path);
+            thin = TRUE;
     }
     else
     {
@@ -4187,7 +4200,20 @@ static GpStatus SOFTWARE_GdipDrawPath(GpGraphics *graphics, GpPen *pen, GpPath *
              (points[1].Y-points[0].Y)*(points[1].Y-points[0].Y) < 2.0001) &&
             ((points[2].X-points[0].X)*(points[2].X-points[0].X) +
              (points[2].Y-points[0].Y)*(points[2].Y-points[0].Y) < 2.0001))
+            thin = TRUE;
+    }
+
+    if (thin)
+    {
+        if (!is_antialiased(graphics))
             return SOFTWARE_GdipDrawThinPath(graphics, pen, path);
+
+        /* antialiased thin lines are one pixel wide and not mitered */
+        hairline = *pen;
+        hairline.unit = UnitPixel;
+        hairline.width = 1.0;
+        hairline.join = LineJoinBevel;
+        pen = &hairline;
     }
 
     stat = GdipClonePath(path, &wide_path);
@@ -6158,6 +6184,11 @@ GpStatus WINGDIPAPI GdipDrawString(GpGraphics *graphics, GDIPCONST WCHAR *string
 
     if(graphics->busy)
         return ObjectBusy;
+
+    /* a layout rectangle with a negative size clips the string away */
+    if ((!format || !(format->attr & StringFormatFlagsNoClip)) && rect->Width && rect->Height &&
+        (rect->Width < 0.0f || rect->Height < 0.0f))
+        return Ok;
 
     if(has_gdi_dc(graphics))
     {
