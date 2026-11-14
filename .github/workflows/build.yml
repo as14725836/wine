@@ -414,6 +414,18 @@ jobs:
       - name: 安装
         run: make -C build-wow64 install
 
+      # winedmo.so 是 x86-64 ELF，设备侧由 box64 加载。box64 不读 glibc 的
+      # ld.so.cache，只认 BOX64_LD_LIBRARY_PATH 和 ELF 自身的 RPATH，而 Wine
+      # 的 unix 库链接时不带 rpath（UNIXLDFLAGS 只有 -shared -Wl,-Bsymbolic
+      # -Wl,-soname）。所以 libav* 必须和 winedmo.so **同目录**，并给两边都
+      # 打上 RPATH=$ORIGIN，否则运行期符号全部解析成 NULL：
+      #   Error: Global Symbol avformat_open_input not found ...
+      - name: 分发 winedmo 依赖（FFmpeg 8.1.1 闭包）
+        if: ${{ (github.event.inputs.enable_ffmpeg || 'true') == 'true' }}
+        env:
+          FFMPEG_PREFIX: /tmp/ffmpeg
+        run: python3 ci/pack_winedmo_ffmpeg.py "${PREFIX}" "${FFMPEG_PREFIX}"
+
       - name: 准备 Wine 打包
         env:
           ENABLE_FFMPEG: ${{ github.event.inputs.enable_ffmpeg || 'true' }}
@@ -423,28 +435,6 @@ jobs:
           PACKAGE_NAME="${BUILD_NAME}"
           mkdir -p "wine-package/$PACKAGE_NAME"
           cp -a "${PREFIX}/." "wine-package/$PACKAGE_NAME/"
-
-          # winedmo.so 通过 DT_NEEDED 依赖 libavformat/libavcodec 等（来自
-          # ${FFMPEG_PREFIX}，不装进 ${PREFIX}）。这些库设备侧不一定有，
-          # 必须随包分发，否则运行期 dlopen("winedmo.so") 失败，winedmo 会退化成
-          # 空壳（unixlib 里没有 __wine_unix_call_funcs），表现为
-          #   err:mfplat:... Unsupported demuxer, status 0xc000007a
-          # （0xc000007a 即 STATUS_PROCEDURE_NOT_FOUND）。
-          if [ "${ENABLE_FFMPEG}" = "true" ] && [ -d "${FFMPEG_PREFIX}/lib" ]; then
-            # 放 lib/ 而不是 lib/wine/：Termux 上这个包会被解到
-            # $PREFIX/glibc/wine-<ver>/，而 $PREFIX/glibc/lib 才是动态链接器
-            # 的搜索路径；lib/ 会被安装脚本并入 $PREFIX/glibc/lib。
-            LIBDIR="wine-package/$PACKAGE_NAME/lib"
-            mkdir -p "$LIBDIR"
-            # 只拷运行期 .so（含 soname symlink），跳过 .a/.la/.pc 与 pkgconfig 目录
-            shopt -s nullglob
-            for f in "${FFMPEG_PREFIX}"/lib/*.so "${FFMPEG_PREFIX}"/lib/*.so.*; do
-              cp -a "$f" "$LIBDIR/"
-            done
-            shopt -u nullglob
-            echo "打包 FFmpeg 运行库: $(ls -1 "$LIBDIR" | wc -l) 个文件"
-            ls -1 "$LIBDIR" | head -20
-          fi
 
       - name: 创建 Wine 压缩包
         run: |
