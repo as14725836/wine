@@ -378,7 +378,9 @@ jobs:
             --with-freetype \
             --with-fontconfig \
             --with-gettext \
+            --with-winedmo \
             --with-opengl \
+            --with-ffmpeg \
             --with-sdl \
             --enable-nls \
             --disable-winemenubuilder \
