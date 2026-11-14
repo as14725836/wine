@@ -760,6 +760,7 @@ SOURCES = \
 	socketapi.h \
 	softpub.h \
 	spatialaudioclient.idl \
+	intsafe.h \
 	specstrings.h \
 	specstrings_strict.h \
 	sperror.h \
