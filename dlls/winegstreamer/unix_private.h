@@ -152,7 +152,9 @@ static inline void touch_h264_used_tag(void)
     }
     else
     {
-        GST_WARNING("STEAM_COMPAT_TRANSCODED_MEDIA_PATH not set, cannot create h264-used file");
+        /* Only Steam's transcode bookkeeping needs this file; its absence is
+         * the normal case when running outside a Steam container. */
+        GST_INFO("STEAM_COMPAT_TRANSCODED_MEDIA_PATH not set, cannot create h264-used file");
     }
 }
 
