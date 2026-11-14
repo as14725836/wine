@@ -414,6 +414,19 @@ jobs:
       - name: 安装
         run: make -C build-wow64 install
 
+      # winedmo.so 是 x86-64 ELF，设备侧由 box64 加载。box64 不读 glibc 的
+      # ld.so.cache，只认 BOX64_LD_LIBRARY_PATH 和 ELF 自身的 RPATH，而 Wine
+      # 的 unix 库链接时不带 rpath（UNIXLDFLAGS 只有 -shared -Wl,-Bsymbolic
+      # -Wl,-soname）。所以 libav* 必须与 winedmo.so 同目录，并给两边都打上
+      # RPATH=$ORIGIN，否则运行期符号全部解析成 NULL：
+      #   Error: Global Symbol avformat_open_input not found, cannot apply
+      #   R_X86_64_GLOB_DAT ... ((nil)) in .../winedmo.so
+      - name: 分发 winedmo 依赖（FFmpeg 闭包）
+        if: ${{ (github.event.inputs.enable_ffmpeg || 'true') == 'true' }}
+        env:
+          FFMPEG_PREFIX: /tmp/ffmpeg
+        run: python3 ci/pack_winedmo_ffmpeg.py "${PREFIX}" "${FFMPEG_PREFIX}"
+
       - name: 准备 Wine 打包
         run: |
           set -e
