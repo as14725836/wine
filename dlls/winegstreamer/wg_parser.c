@@ -45,6 +45,16 @@
 
 #include "unix_private.h"
 
+/* Optional runtime overrides for the GStreamer pipeline. Both default to
+ * off, so behaviour is unchanged unless the user explicitly opts in. Read
+ * here on the Unix side, where getenv() is available. */
+static bool wg_env_enabled(const char *name)
+{
+    const char *value = getenv(name);
+
+    return value && *value && strcmp(value, "0");
+}
+
 extern GstGLDisplay *gl_display;
 
 typedef enum
@@ -603,6 +613,51 @@ static GstAutoplugSelectResult autoplug_select_cb(GstElement *bin, GstPad *pad,
     {
         GST_INFO("Skipping \"Proton video converter\".");
         return GST_AUTOPLUG_SELECT_SKIP;
+    }
+    if (wg_env_enabled("WINE_GST_NO_HWDEC")
+            && strstr(klass, GST_ELEMENT_FACTORY_KLASS_DECODER)
+            && gst_element_factory_get_static_pad_templates(fact))
+    {
+        const GList *entry;
+
+        /* Hardware decoders emit device-memory surfaces, advertised as
+         * "memory:VASurface" / "memory:GLMemory" / "memory:D3D11Memory".
+         * Software decoders (avdec_*) only produce system-memory video/x-raw.
+         * reject the former so decodebin falls back to the latter.
+         *
+         * Both get_static_pad_templates() and gst_static_pad_template_get_caps()
+         * are transfer-none; the returned caps must not be unreferenced. */
+        for (entry = gst_element_factory_get_static_pad_templates(fact);
+                entry; entry = entry->next)
+        {
+            GstStaticPadTemplate *pad_template = entry->data;
+            GstCaps *template_caps = gst_static_pad_template_get_caps(pad_template);
+            guint i;
+
+            for (i = 0; i < gst_caps_get_size(template_caps); ++i)
+            {
+                GstCapsFeatures *features = gst_caps_get_features(template_caps, i);
+                static const char *const hw_memories[] =
+                {
+                    "memory:VASurface", "memory:GLMemory", "memory:D3D11Memory",
+                    "memory:EGLImage", "memory:DMABuf", "memory:QSV",
+                };
+                guint j;
+
+                if (!features || gst_caps_features_contains(features,
+                        GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY))
+                    continue;
+                for (j = 0; j < ARRAY_SIZE(hw_memories); ++j)
+                {
+                    if (gst_caps_features_contains(features, hw_memories[j]))
+                    {
+                        GST_WARNING("WINE_GST_NO_HWDEC: skipping \"%s\" (%s).",
+                                name, hw_memories[j]);
+                        return GST_AUTOPLUG_SELECT_SKIP;
+                    }
+                }
+            }
+        }
     }
 
     if (!parser->sink_caps && strstr(klass, GST_ELEMENT_FACTORY_KLASS_DEMUXER))
@@ -2274,7 +2329,10 @@ static NTSTATUS wg_parser_create(void *args)
 
     if (!(parser = calloc(1, sizeof(*parser))))
         return E_OUTOFMEMORY;
-    if ((parser->use_opengl = !!(params->flags & WG_PARSER_CREATE_FLAG_USE_OPENGL) && gl_display))
+    if (wg_env_enabled("WINE_GST_NO_GL"))
+        GST_INFO("WINE_GST_NO_GL is set, disabling OpenGL post-processing.");
+    if ((parser->use_opengl = !wg_env_enabled("WINE_GST_NO_GL")
+            && !!(params->flags & WG_PARSER_CREATE_FLAG_USE_OPENGL) && gl_display))
     {
         if ((parser->context = gst_context_new(GST_GL_DISPLAY_CONTEXT_TYPE, false)))
             gst_context_set_gl_display(parser->context, gl_display);
