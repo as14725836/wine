@@ -1452,6 +1452,7 @@ static HRESULT WINAPI media_source_GetCharacteristics(IMFMediaSource *iface, DWO
 static HRESULT WINAPI media_source_CreatePresentationDescriptor(IMFMediaSource *iface, IMFPresentationDescriptor **descriptor)
 {
     struct media_source *source = impl_from_IMFMediaSource(iface);
+    BOOL video_selected, audio_selected;
     HRESULT hr;
     UINT i;
 
@@ -1466,9 +1467,31 @@ static HRESULT WINAPI media_source_CreatePresentationDescriptor(IMFMediaSource *
         if (FAILED(hr = IMFPresentationDescriptor_SetUINT64(*descriptor, &MF_PD_DURATION, source->duration)))
             WARN("Failed to set presentation descriptor MF_PD_DURATION, hr %#lx\n", hr);
 
+        /* Select one stream of each major type by default, rather than every
+         * stream. Ported from wine-staging patch mfplat-streaming-support
+         * 0038. Keeping every stream selected makes a file with several audio
+         * or video tracks start all of them at once. */
+        video_selected = audio_selected = FALSE;
         for (i = 0; i < source->stream_count; ++i)
         {
-            if (FAILED(hr = IMFPresentationDescriptor_SelectStream(*descriptor, i)))
+            struct wg_format format;
+            BOOL select = TRUE;
+
+            if (SUCCEEDED(wg_format_from_stream_descriptor(source->descriptors[i], &format)))
+            {
+                if (format.major_type == WG_MAJOR_TYPE_VIDEO)
+                {
+                    select = !video_selected;
+                    video_selected = TRUE;
+                }
+                else if (format.major_type == WG_MAJOR_TYPE_AUDIO)
+                {
+                    select = !audio_selected;
+                    audio_selected = TRUE;
+                }
+            }
+
+            if (select && FAILED(hr = IMFPresentationDescriptor_SelectStream(*descriptor, i)))
                 WARN("Failed to select stream %u, hr %#lx\n", i, hr);
         }
 
