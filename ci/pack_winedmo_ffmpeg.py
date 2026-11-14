@@ -445,6 +445,38 @@ def main():
         log("FATAL: %s/lib/wine 下没有 64 位的 *-unix 目录" % prefix)
         return 1
 
+    # dry-run：只校验依赖闭包与 ABI，不复制库、不改 rpath。
+    # 用于「设备侧已自带 libav*」的构建，避免把 FFmpeg 重复打进产物。
+    dry = os.environ.get("WINEDMO_DRY_RUN", "").lower() in ("1", "true", "yes")
+    if dry:
+        log("=" * 62)
+        log("DRY-RUN：只校验，不分发（WINEDMO_DRY_RUN=1）")
+        log("  源      : %s" % src_lib)
+        log("  闭包    : %d 个 soname" % len(groups))
+        for soname in sorted(groups):
+            log("    %-26s <- %s" % (soname, groups[soname]))
+        log("=" * 62)
+        ok = True
+        for d in targets:
+            wd = os.path.join(d, "winedmo.so")
+            if not os.path.isfile(wd):
+                log("  WARN: %s 里没有 winedmo.so" % os.path.basename(d))
+                continue
+            needed = read_needed(wd)
+            av = [n for n in needed if n.startswith("libav")]
+            log("  %s/winedmo.so: %d 条 DT_NEEDED，大小 %d bytes"
+                % (os.path.basename(d), len(needed), os.path.getsize(wd)))
+            log("    含 libav*: %s" % (" ".join(av) if av else "(无)"))
+            if not av:
+                log("  WARN: winedmo.so 未链接任何 libav* —— "
+                    "configure 时 FFMPEG_LIBS 为空，winedmo 是空壳")
+                ok = False
+        if ok:
+            log("OK: winedmo 依赖校验通过（未分发任何库）")
+        else:
+            log("WARN: winedmo 依赖校验未通过，但 dry-run 不阻断构建")
+        return 0
+
     log("=" * 62)
     log("分发 FFmpeg 共享库 -> Wine unix 库目录")
     log("  源      : %s" % src_lib)
