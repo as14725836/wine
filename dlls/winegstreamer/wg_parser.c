@@ -146,8 +146,6 @@ static struct wg_parser_stream *get_stream(wg_parser_stream_t stream)
 
 static bool caps_is_compressed(GstCaps *caps)
 {
-    const GstStructure *structure;
-    const gchar *name;
     struct wg_format format;
 
     if (!caps || gst_caps_is_empty(caps))
@@ -155,24 +153,15 @@ static bool caps_is_compressed(GstCaps *caps)
 
     wg_format_from_caps(&format, caps);
 
-    if (format.major_type != WG_MAJOR_TYPE_UNKNOWN)
-        return format.major_type != WG_MAJOR_TYPE_VIDEO
-                && format.major_type != WG_MAJOR_TYPE_AUDIO;
-
-    /* A stream pad can still expose its element's template caps when pad-added
-     * fires; asfreader for instance advertises "video/x-ms-asf" there.  Such
-     * caps have no wg_format mapping, so major_type stays UNKNOWN.  Reporting
-     * "not compressed" would skip decodebin and leave the stream undecoded
-     * (black picture), so fall back to the caps name: anything that is not
-     * raw audio/video must go through decodebin. */
-    structure = gst_caps_get_structure(caps, 0);
-    name = gst_structure_get_name(structure);
-
-    if (g_str_has_prefix(name, "audio/x-raw") || g_str_has_prefix(name, "video/x-raw"))
-        return false;
-
-    GST_INFO("caps %" GST_PTR_FORMAT " have no wg_format mapping, assuming compressed.", caps);
-    return true;
+    /* Caps with no wg_format mapping (asfreader advertises container-level
+     * "video/x-ms-asf" on its stream pads) are *not* compressed payload: the
+     * container demuxer keeps going on its own. Treating them as compressed
+     * used to spawn a nested decodebin per stream, whose first decoded pad
+     * (audio) then claimed the stream's single my_sink, so the video branch
+     * could never be linked and playback ended up with sound but no picture. */
+    return format.major_type != WG_MAJOR_TYPE_UNKNOWN
+            && format.major_type != WG_MAJOR_TYPE_VIDEO
+            && format.major_type != WG_MAJOR_TYPE_AUDIO;
 }
 
 static NTSTATUS wg_parser_get_stream_count(void *args)
@@ -1283,11 +1272,26 @@ static void stream_decodebin_pad_added_cb(GstElement *element, GstPad *pad, gpoi
 {
     struct wg_parser_stream *stream = user;
     struct wg_parser *parser = stream->parser;
+    GstPad *peer;
 
     GST_LOG("stream %p, parser %p, element %p, pad %p.", stream, parser, element, pad);
 
     if (gst_pad_is_linked(pad))
         return;
+
+    /* my_sink is the stream's single downstream entry point. Once the
+     * post-processing chain of a previously decoded pad has been linked to it,
+     * a further pad from this decodebin can no longer be routed there; calling
+     * link_element_to_sink() again would trip the "GST_PAD_PEER (pad) == NULL"
+     * assertion inside gst_element_get_compatible_pad() and drop the branch
+     * silently. Bail out early instead, so the loss is at least visible. */
+    if ((peer = gst_pad_get_peer(stream->my_sink)))
+    {
+        gst_object_unref(peer);
+        GST_WARNING("my_sink of stream %u is already linked, ignoring pad %p.",
+                stream->number, pad);
+        return;
+    }
 
     if (!stream_create_post_processing_elements(pad, stream))
         return;
