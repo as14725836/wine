@@ -1621,7 +1621,7 @@ static gboolean src_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
             GstCaps *caps, *filter;
 
             gst_query_parse_caps(query, &filter);
-            if (!(caps = gst_pad_get_pad_template_caps(parser->my_sink)))
+            if (!(caps = gst_pad_get_pad_template_caps(parser->my_src)))
                 return FALSE;
 
             if (filter)
