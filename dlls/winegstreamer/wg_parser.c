@@ -146,15 +146,33 @@ static struct wg_parser_stream *get_stream(wg_parser_stream_t stream)
 
 static bool caps_is_compressed(GstCaps *caps)
 {
+    const GstStructure *structure;
+    const gchar *name;
     struct wg_format format;
 
-    if (!caps)
+    if (!caps || gst_caps_is_empty(caps))
         return false;
+
     wg_format_from_caps(&format, caps);
 
-    return format.major_type != WG_MAJOR_TYPE_UNKNOWN
-            && format.major_type != WG_MAJOR_TYPE_VIDEO
-            && format.major_type != WG_MAJOR_TYPE_AUDIO;
+    if (format.major_type != WG_MAJOR_TYPE_UNKNOWN)
+        return format.major_type != WG_MAJOR_TYPE_VIDEO
+                && format.major_type != WG_MAJOR_TYPE_AUDIO;
+
+    /* A stream pad can still expose its element's template caps when pad-added
+     * fires; asfreader for instance advertises "video/x-ms-asf" there.  Such
+     * caps have no wg_format mapping, so major_type stays UNKNOWN.  Reporting
+     * "not compressed" would skip decodebin and leave the stream undecoded
+     * (black picture), so fall back to the caps name: anything that is not
+     * raw audio/video must go through decodebin. */
+    structure = gst_caps_get_structure(caps, 0);
+    name = gst_structure_get_name(structure);
+
+    if (g_str_has_prefix(name, "audio/x-raw") || g_str_has_prefix(name, "video/x-raw"))
+        return false;
+
+    GST_INFO("caps %" GST_PTR_FORMAT " have no wg_format mapping, assuming compressed.", caps);
+    return true;
 }
 
 static NTSTATUS wg_parser_get_stream_count(void *args)
@@ -1592,6 +1610,30 @@ static gboolean src_query_cb(GstPad *pad, GstObject *parent, GstQuery *query)
         {
             const char *live = getenv("WINE_ENABLE_GST_LIVE_LATENCY");
             gst_query_set_latency(query, live && !strcmp(live, "1"), 0, 0);
+            return TRUE;
+        }
+
+        case GST_QUERY_CAPS:
+        {
+            /* my_src is the downstream-facing pad: elements below us (decodebin,
+             * parsers) ask it which caps we can produce.  Answer with what our
+             * upstream side accepts, otherwise negotiation stalls forever. */
+            GstCaps *caps, *filter;
+
+            gst_query_parse_caps(query, &filter);
+            if (!(caps = gst_pad_get_pad_template_caps(parser->my_sink)))
+                return FALSE;
+
+            if (filter)
+            {
+                GstCaps *temp = gst_caps_intersect_full(filter, caps, GST_CAPS_INTERSECT_FIRST);
+                gst_caps_unref(caps);
+                caps = temp;
+            }
+
+            GST_LOG("Responding caps query with %" GST_PTR_FORMAT ".", caps);
+            gst_query_set_caps_result(query, caps);
+            gst_caps_unref(caps);
             return TRUE;
         }
 
