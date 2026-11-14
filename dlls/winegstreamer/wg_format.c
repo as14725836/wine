@@ -151,8 +151,6 @@ static enum wg_video_format wg_video_format_from_gst(GstVideoFormat format)
             return WG_VIDEO_FORMAT_AYUV;
         case GST_VIDEO_FORMAT_I420:
             return WG_VIDEO_FORMAT_I420;
-        case GST_VIDEO_FORMAT_I420_10LE:
-            return WG_VIDEO_FORMAT_P010_10LE;
         case GST_VIDEO_FORMAT_NV12:
             return WG_VIDEO_FORMAT_NV12;
         case GST_VIDEO_FORMAT_P010_10LE:
@@ -472,10 +470,6 @@ static void wg_format_from_caps_video_mpeg1(struct wg_format *format, const GstC
 {
     const GstStructure *structure = gst_caps_get_structure(caps, 0);
     gint width, height, fps_n, fps_d;
-    const GValue *codec_data_value;
-    GstBuffer *codec_data;
-    GstMapInfo map;
-    guint size;
 
     if (!gst_structure_get_int(structure, "width", &width))
     {
@@ -485,12 +479,6 @@ static void wg_format_from_caps_video_mpeg1(struct wg_format *format, const GstC
     if (!gst_structure_get_int(structure, "height", &height))
     {
         GST_WARNING("Missing \"height\" value in %" GST_PTR_FORMAT ".", caps);
-        return;
-    }
-    if (!(codec_data_value = gst_structure_get_value(structure, "codec_data"))
-            || !(codec_data = gst_value_get_buffer(codec_data_value)))
-    {
-        GST_WARNING("Missing \"codec_data\" value in %" GST_PTR_FORMAT ".", caps);
         return;
     }
     if (!gst_structure_get_fraction(structure, "framerate", &fps_n, &fps_d))
@@ -504,15 +492,6 @@ static void wg_format_from_caps_video_mpeg1(struct wg_format *format, const GstC
     format->u.video.height = height;
     format->u.video.fps_n = fps_n;
     format->u.video.fps_d = fps_d;
-
-    gst_buffer_map(codec_data, &map, GST_MAP_READ);
-
-    assert(sizeof(format->u.video.codec_data) >= MAX_SIZE_MPEG1_SEQUENCE_INFO);
-    size = min(map.size, MAX_SIZE_MPEG1_SEQUENCE_INFO);
-    format->u.video.codec_data_len = size;
-    memcpy(format->u.video.codec_data, map.data, size);
-
-    gst_buffer_unmap(codec_data, &map);
 }
 
 static const struct
@@ -634,30 +613,47 @@ static void wg_format_from_caps_video_h264(struct wg_format *format, const GstCa
 
 void wg_format_from_caps(struct wg_format *format, const GstCaps *caps)
 {
+    static const char *const container_caps[] =
+    {
+        "video/x-ms-asf",
+        "video/x-msvideo",
+        "video/x-matroska",
+        "video/quicktime",
+        "video/mp4",
+        "audio/x-wav",
+        "audio/x-ms-wma",
+        "application/x-ogg",
+        "application/ogg",
+    };
     const GstStructure *structure = gst_caps_get_structure(caps, 0);
     const char *name = gst_structure_get_name(structure);
+    unsigned int i;
     gboolean parsed;
     gint version;
 
     memset(format, 0, sizeof(*format));
 
+    /* autoplug_continue_cb() runs while decodebin is still typefinding, so it
+     * sees the container caps before any actual stream type is known. Those
+     * are not media types we can map, and reporting them every time a
+     * container is opened is just noise. */
+    for (i = 0; i < ARRAY_SIZE(container_caps); ++i)
+        if (!strcmp(name, container_caps[i]))
+            return;
+
     if (!strcmp(name, "audio/x-raw"))
     {
         GstAudioInfo info;
 
-        if (gst_caps_is_fixed(caps) && gst_audio_info_from_caps(&info, caps))
+        if (gst_audio_info_from_caps(&info, caps))
             wg_format_from_audio_info(format, &info);
-        else
-            GST_WARNING("Unable to get audio info from caps");
     }
     else if (!strcmp(name, "video/x-raw"))
     {
         GstVideoInfo info;
 
-        if (gst_caps_is_fixed(caps) && gst_video_info_from_caps(&info, caps))
+        if (gst_video_info_from_caps(&info, caps))
             wg_format_from_video_info(format, &info);
-        else
-            GST_WARNING("Unable to get video info from caps");
     }
     else if (!strcmp(name, "audio/mpeg") && gst_structure_get_boolean(structure, "parsed", &parsed) && parsed)
     {
@@ -904,20 +900,10 @@ static GstCaps *wg_format_to_caps_audio_wma(const struct wg_format *format)
     GstBuffer *buffer;
     GstCaps *caps;
 
-    if (format->u.audio.is_xma)
-    {
-        if (!(caps = gst_caps_new_empty_simple("audio/x-xma")))
-            return NULL;
-        if (format->u.audio.version)
-            gst_caps_set_simple(caps, "xmaversion", G_TYPE_INT, format->u.audio.version, NULL);
-    }
-    else
-    {
-        if (!(caps = gst_caps_new_empty_simple("audio/x-wma")))
-            return NULL;
-        if (format->u.audio.version)
-            gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.audio.version, NULL);
-    }
+    if (!(caps = gst_caps_new_empty_simple("audio/x-wma")))
+        return NULL;
+    if (format->u.audio.version)
+        gst_caps_set_simple(caps, "wmaversion", G_TYPE_INT, format->u.audio.version, NULL);
 
     if (format->u.audio.bitrate)
         gst_caps_set_simple(caps, "bitrate", G_TYPE_INT, format->u.audio.bitrate, NULL);
@@ -1112,7 +1098,6 @@ static GstCaps *wg_format_to_caps_video_indeo(const struct wg_format *format)
 
 static GstCaps *wg_format_to_caps_video_mpeg1(const struct wg_format *format)
 {
-    GstBuffer *buffer;
     GstCaps *caps;
 
     if (!(caps = gst_caps_new_empty_simple("video/mpeg")))
@@ -1127,20 +1112,6 @@ static GstCaps *wg_format_to_caps_video_mpeg1(const struct wg_format *format)
         gst_caps_set_simple(caps, "height", G_TYPE_INT, format->u.video.height, NULL);
     if (format->u.video.fps_d || format->u.video.fps_n)
         gst_caps_set_simple(caps, "framerate", GST_TYPE_FRACTION, format->u.video.fps_n, format->u.video.fps_d, NULL);
-
-    if (format->u.video.codec_data_len)
-    {
-        if (!(buffer = gst_buffer_new_and_alloc(format->u.video.codec_data_len)))
-        {
-            gst_caps_unref(caps);
-            return NULL;
-        }
-
-        gst_buffer_fill(buffer, 0, format->u.video.codec_data, format->u.video.codec_data_len);
-        gst_caps_set_simple(caps, "codec_data", GST_TYPE_BUFFER, buffer, NULL);
-        gst_buffer_unref(buffer);
-    }
-
     return caps;
 }
 
