@@ -57,9 +57,21 @@ on:
           - 'false'
 
       gst_decoders_version:
-        description: 'GStreamer decoders sysroot 版本'
+        description: 'GStreamer(decoders)版本：作为编译依赖头文件/版本，替代 apt 自带的 1.22.0（来源：termux-glibc-GStreamer Releases）'
         required: false
         default: '1.29.2'
+        type: string
+
+      gst_decoders_repo:
+        description: 'GStreamer decoders 发布仓库'
+        required: false
+        default: 'as14725836/termux-glibc-GStreamer'
+        type: string
+
+      ffmpeg_version:
+        description: 'FFmpeg 依赖版本（取 as14725836/glibc-packages 预编译包，libav* 随包分发）'
+        required: false
+        default: '8.1.1'
         type: string
 
 env:
@@ -217,7 +229,7 @@ jobs:
         if: ${{ (github.event.inputs.enable_gstreamer || 'true') == 'true' }}
         shell: bash
         env:
-          GST_REPO: as14725836/termux-glibc-GStreamer
+          GST_REPO: ${{ github.event.inputs.gst_decoders_repo || 'as14725836/termux-glibc-GStreamer' }}
           GST_TAG: ${{ github.event.inputs.gst_decoders_version || '1.29.2' }}
         run: |
           set -eux
@@ -276,10 +288,10 @@ jobs:
       # FFmpeg 预编译包（winedmo）
       # --------------------------------------------------------
 
-      - name: 下载 FFmpeg 预编译包
+      - name: 下载 FFmpeg ${{ github.event.inputs.ffmpeg_version || '8.1.1' }} 预编译包（glibc-packages）
         if: ${{ (github.event.inputs.enable_ffmpeg || 'true') == 'true' }}
         env:
-          FFMPEG_VERSION: '8.1.1'
+          FFMPEG_VERSION: ${{ github.event.inputs.ffmpeg_version || '8.1.1' }}
           FFMPEG_PREFIX: /tmp/ffmpeg
           FFMPEG_PKG_RELEASE: packages-39239132896
           FFMPEG_PKG_ARCH: x86_64
