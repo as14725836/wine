@@ -45,7 +45,8 @@ static CRITICAL_SECTION_DEBUG mmdriver_lock_debug =
 };
 static CRITICAL_SECTION mmdriver_lock = { &mmdriver_lock_debug, -1, 0, 0, 0, 0 };
 
-DWORD wow_mm_callback_data;  /* 16-bit callback data SEGPTR (0 = none) */
+DWORD wow_mm_callback_data;  /* 16-bit callback data linear ptr (0 = none) */
+CRITICAL_SECTION wow_mm_callback_section;
 static LPWINE_DRIVER   lpDrvItemList  /* = NULL */;
 
 static void DRIVER_Dump(const char *comment)
@@ -552,8 +553,51 @@ DWORD WINAPI NotifyCallbackData( UINT uDevID, UINT uMsg, DWORD dwInstance,
                                  DWORD dwParam1, DWORD parg16 )
 {
     TRACE( "(%u, %u, %08x, %08x, %08x)\n", uDevID, uMsg, dwInstance, dwParam1, parg16 );
+    if (parg16 && !wow_mm_callback_data)
+        InitializeCriticalSection( &wow_mm_callback_section );
     wow_mm_callback_data = parg16;
     return 0;
+}
+
+/**************************************************************************
+ *                WOW32DriverCallback            [WINMM.@]
+ *
+ * Undocumented 16-bit WOW entry point. Writes a callback into the
+ * CALLBACK_DATA ring registered by NotifyCallbackData(), mirroring the
+ * Windows NT mmsystem WOW thunk. The 16-bit side consumes the ring and
+ * increments wRecvCount from its interrupt/timer callback.
+ */
+BOOL WINAPI WOW32DriverCallback( DWORD dwCallback, DWORD dwFlags, WORD wID,
+                                 WORD wMsg, DWORD dwUser, DWORD dw1, DWORD dw2 )
+{
+    wowmm_callback_data *data = (wowmm_callback_data *)(ULONG_PTR)wow_mm_callback_data;
+    wowmm_callback_args *args;
+    WORD next;
+
+    TRACE( "(%08x, %08x, %04x, %04x, %08x, %08x, %08x)\n",
+           dwCallback, dwFlags, wID, wMsg, dwUser, dw1, dw2 );
+
+    if ((dwFlags & DCB_TYPEMASK) == DCB_WINDOW)
+        return PostMessageA( (HWND)(ULONG_PTR)LOWORD(dwCallback), wMsg, wID, dw1 );
+
+    if (!data) return FALSE;
+
+    EnterCriticalSection( &wow_mm_callback_section );
+    next = (data->wSendCount + 1) % WOWMM_CALLBACK_ARGS_SIZE;
+    if (next != data->wRecvCount)
+    {
+        args = &data->args[data->wSendCount];
+        args->dwFlags        = dwFlags;
+        args->dwFunctionAddr = dwCallback;
+        args->wHandle        = wID;
+        args->wMessage       = wMsg;
+        args->dwInstance     = dwUser;
+        args->dwParam1       = dw1;
+        args->dwParam2       = dw2;
+        data->wSendCount = next;
+    }
+    LeaveCriticalSection( &wow_mm_callback_section );
+    return TRUE;
 }
 
 /**************************************************************************

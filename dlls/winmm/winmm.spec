@@ -192,7 +192,7 @@
 # MigrateAllDrivers
 # MigrateSoundEvents
 @ stdcall NotifyCallbackData(long long long long long)
-# WOW32DriverCallback
+@ stdcall WOW32DriverCallback(long long long long long long long)
 # WOW32ResolveMultiMediaHandle
 # WOWAppExit
 # WinmmLogoff

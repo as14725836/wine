@@ -28,7 +28,29 @@
 /* 16-bit WOW multimedia callback data SEGPTR, registered by
  * NotifyCallbackData(). Wine 16-bit callbacks use their own thunks;
  * this is kept for compatibility with 16-bit mmsystem.dll. */
-extern DWORD wow_mm_callback_data;
+/* 16-bit WOW multimedia callback data (wowmmcb.h layout).  The layout
+ * must match the 16-bit side, which packs these structures. */
+#define WOWMM_CALLBACK_ARGS_SIZE 16
+typedef struct __attribute__((packed))
+{
+    DWORD dwFlags;
+    DWORD dwFunctionAddr;
+    WORD  wHandle;
+    WORD  wMessage;
+    DWORD dwInstance;
+    DWORD dwParam1;
+    DWORD dwParam2;
+} wowmm_callback_args;
+typedef struct __attribute__((packed))
+{
+    WORD wRecvCount;
+    WORD wSendCount;
+    wowmm_callback_args args[WOWMM_CALLBACK_ARGS_SIZE];
+    WORD wIntsCount;
+} wowmm_callback_data;
+
+extern DWORD wow_mm_callback_data;  /* linear ptr to 16-bit callback data */
+extern CRITICAL_SECTION wow_mm_callback_section;
 
 /* Who said goofy boy ? */
 #define	WINE_DI_MAGIC	0x900F1B01
