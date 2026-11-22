@@ -25,6 +25,11 @@
 #include "winbase.h"
 #include "mmddk.h"
 
+/* 16-bit WOW multimedia callback data SEGPTR, registered by
+ * NotifyCallbackData(). Wine 16-bit callbacks use their own thunks;
+ * this is kept for compatibility with 16-bit mmsystem.dll. */
+extern DWORD wow_mm_callback_data;
+
 /* Who said goofy boy ? */
 #define	WINE_DI_MAGIC	0x900F1B01
 

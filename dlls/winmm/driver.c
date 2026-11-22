@@ -45,6 +45,7 @@ static CRITICAL_SECTION_DEBUG mmdriver_lock_debug =
 };
 static CRITICAL_SECTION mmdriver_lock = { &mmdriver_lock_debug, -1, 0, 0, 0, 0 };
 
+DWORD wow_mm_callback_data;  /* 16-bit callback data SEGPTR (0 = none) */
 static LPWINE_DRIVER   lpDrvItemList  /* = NULL */;
 
 static void DRIVER_Dump(const char *comment)
@@ -535,6 +536,24 @@ static const char* DRIVER_getCallback(DWORD uFlags)
     case DCB_FUNCTION: return "32bit function";
     default:           return "UNKNOWN";
     }
+}
+
+/**************************************************************************
+ *                    NotifyCallbackData            [WINMM.@]
+ *
+ * Undocumented 16-bit WOW entry point. Windows 16-bit mmsystem.dll calls
+ * this to register the address of its page-locked callback data structure
+ * (a 16:16 SEGPTR); passing 0 unregisters it. uDevID/uMsg/dwInstance/
+ * dwParam1 are unused by Windows. Wine implements 16-bit mm callbacks
+ * through MMSYSTDRV thunks, so we just track the pointer for compatibility
+ * and always return 0 like Windows does.
+ */
+DWORD WINAPI NotifyCallbackData( UINT uDevID, UINT uMsg, DWORD dwInstance,
+                                 DWORD dwParam1, DWORD parg16 )
+{
+    TRACE( "(%u, %u, %08x, %08x, %08x)\n", uDevID, uMsg, dwInstance, dwParam1, parg16 );
+    wow_mm_callback_data = parg16;
+    return 0;
 }
 
 /**************************************************************************

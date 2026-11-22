@@ -191,7 +191,7 @@
 @ stdcall waveOutWrite(long ptr long)
 # MigrateAllDrivers
 # MigrateSoundEvents
-# NotifyCallbackData
+@ stdcall NotifyCallbackData(long long long long long)
 # WOW32DriverCallback
 # WOW32ResolveMultiMediaHandle
 # WOWAppExit
