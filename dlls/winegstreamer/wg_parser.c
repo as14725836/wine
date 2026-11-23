@@ -2234,7 +2234,16 @@ static NTSTATUS wg_parser_connect(void *args)
         goto out;
 
     gst_element_set_state(parser->container, GST_STATE_PAUSED);
-    ret = gst_element_get_state(parser->container, NULL, NULL, -1);
+    /* Never wait indefinitely for preroll: some sources never preroll (live
+     * streams, broken containers) and an unbounded wait here blocks the whole
+     * parser creation. */
+    ret = gst_element_get_state(parser->container, NULL, NULL, 30 * GST_SECOND);
+
+    if (ret == GST_STATE_CHANGE_ASYNC)
+    {
+        GST_WARNING("Timed out waiting for the pipeline to preroll.\n");
+        ret = GST_STATE_CHANGE_SUCCESS;
+    }
 
     if (ret == GST_STATE_CHANGE_FAILURE)
     {
