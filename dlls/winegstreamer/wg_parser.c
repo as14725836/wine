@@ -210,22 +210,8 @@ static NTSTATUS wg_parser_get_next_read_offset(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    {
-        ULONGLONG deadline = parser_now_ms() + 10000;
-
-        while (parser->sink_connected && !parser->read_request.size)
-        {
-            ULONGLONG now = parser_now_ms();
-
-            if (now >= deadline)
-            {
-                GST_WARNING("Timed out waiting for a read request, disconnecting.\n");
-                parser->sink_connected = false;
-                break;
-            }
-            parser_wait_cond(parser, &parser->read_cond, (unsigned int)(deadline - now));
-        }
-    }
+    while (parser->sink_connected && !parser->read_request.size)
+        pthread_cond_wait(&parser->read_cond, &parser->mutex);
 
     if (!parser->sink_connected)
     {
@@ -1114,6 +1100,7 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
 
     {
         ULONGLONG deadline = parser_now_ms() + 10000;
+        bool timed_out = false;
 
         while (stream->enabled && !stream->flushing && stream->buffer)
         {
@@ -1122,9 +1109,19 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
             if (now >= deadline)
             {
                 GST_WARNING("Timed out waiting for the previous buffer to be released.\n");
+                timed_out = true;
                 break;
             }
             parser_wait_cond(parser, &stream->event_empty_cond, (unsigned int)(deadline - now));
+        }
+
+        if (timed_out)
+        {
+            /* Never overwrite a buffer the frontend has not released yet: that
+             * would leak the previous reference. Drop this one instead. */
+            pthread_mutex_unlock(&parser->mutex);
+            gst_buffer_unref(buffer);
+            return GST_FLOW_OK;
         }
     }
 
@@ -1622,7 +1619,12 @@ static GstFlowReturn issue_read_request(struct wg_parser *parser, guint64 offset
             if (now >= deadline)
             {
                 GST_WARNING("Timed out waiting for the upstream read to complete.\n");
-                break;
+                /* Clear the request so the next one does not trip the assertion
+                 * at the top of this function, and fail this read cleanly. */
+                parser->read_request.size = 0;
+                parser->read_request.buffer = NULL;
+                pthread_mutex_unlock(&parser->mutex);
+                return GST_FLOW_ERROR;
             }
             parser_wait_cond(parser, &parser->read_done_cond, (unsigned int)(deadline - now));
         }
