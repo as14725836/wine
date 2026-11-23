@@ -296,11 +296,11 @@ static void vmr_check_copy(const BITMAPINFOHEADER *header, unsigned int width, i
         result = mismatches ? "MISMATCH" : "match";
 
 done:
-    WARN("copycheck #%u time %s subtype %#lx surface %#lx %ux%u size %u pitch %u/%lu %s mismatches %lu first %s:%u,%u.\n",
+    WARN("copycheck #%u time %s subtype %#lx surface %#lx %ux%u size %u pitch %u/%lu %s mismatches %lu first %s:%lu,%lu.\n",
             frame_count, time_valid ? debugstr_time(start_time) : "invalid", format,
             surface_desc->ddpfPixelFormat.dwFourCC, width, frame_height, data_size,
-            src_pitch, (unsigned long)surface_desc->lPitch, result, mismatches,
-            first_plane ? first_plane : "none", first_row, first_column);
+            src_pitch, (unsigned long)surface_desc->lPitch, result, (unsigned long)mismatches,
+            first_plane ? first_plane : "none", (unsigned long)first_row, (unsigned long)first_column);
 }
 
 static BOOL vmr_fill_yv12_test_pattern(DDSURFACEDESC2 *surface_desc, unsigned int width,
