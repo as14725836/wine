@@ -1585,7 +1585,8 @@ static HRESULT WINAPI media_source_Shutdown(IMFMediaSource *iface)
     wg_parser_disconnect(source->wg_parser);
 
     source->read_thread_shutdown = true;
-    WaitForSingleObject(source->read_thread, INFINITE);
+    if (WaitForSingleObject(source->read_thread, 5000) == WAIT_TIMEOUT)
+        ERR("Read thread did not exit in time.\n");
     CloseHandle(source->read_thread);
 
     IMFMediaEventQueue_QueueEventParamVar(source->event_queue, MEError, &GUID_NULL, MF_E_SHUTDOWN, NULL);
@@ -1769,7 +1770,8 @@ fail:
     if (object->read_thread)
     {
         object->read_thread_shutdown = true;
-        WaitForSingleObject(object->read_thread, INFINITE);
+        if (WaitForSingleObject(object->read_thread, 5000) == WAIT_TIMEOUT)
+            ERR("Read thread did not exit in time.\n");
         CloseHandle(object->read_thread);
     }
     if (object->wg_parser)
