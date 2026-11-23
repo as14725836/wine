@@ -148,6 +148,9 @@ struct wg_parser_stream
     gchar *tags[WG_PARSER_TAG_COUNT];
 };
 
+static ULONGLONG parser_now_ms(void);
+static bool parser_wait_cond(struct wg_parser *parser, pthread_cond_t *cond, unsigned int timeout_ms);
+
 static struct wg_parser *get_parser(wg_parser_t parser)
 {
     return (struct wg_parser *)(ULONG_PTR)parser;
