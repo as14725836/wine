@@ -300,7 +300,20 @@ enum wined3d_fence_result wined3d_fence_wait(const struct wined3d_fence *fence,
                 ret = WINED3D_FENCE_OK;
                 break;
 
-                /* We don't expect a timeout for a ~292 year wait */
+                case GL_TIMEOUT_EXPIRED:
+                    /* Some drivers (zink with async GL threads) report an
+                     * immediate timeout even for an effectively infinite wait.
+                     * glFinish() guarantees commands before the fence completed. */
+                    GL_EXTCALL(glFinish());
+                    checkGLcall("glFinish");
+                    if (GL_EXTCALL(glClientWaitSync(fence->object.sync, 0, 0)) == GL_ALREADY_SIGNALED)
+                        ret = WINED3D_FENCE_OK;
+                    else
+                    {
+                        ERR("glClientWaitSync returned %#x after glFinish.\n", gl_ret);
+                        ret = WINED3D_FENCE_ERROR;
+                    }
+                    break;
             default:
                 ERR("glClientWaitSync returned %#x.\n", gl_ret);
                 ret = WINED3D_FENCE_ERROR;
