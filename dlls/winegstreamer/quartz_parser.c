@@ -1501,7 +1501,15 @@ static DWORD CALLBACK stream_thread(void *arg)
         EnterCriticalSection(&filter->streaming_cs);
 
         while (filter->flushing)
-            SleepConditionVariableCS(&filter->flushing_cv, &filter->streaming_cs, INFINITE);
+        {
+            if (!SleepConditionVariableCS(&filter->flushing_cv, &filter->streaming_cs, 1000))
+            {
+                /* Re-check the state regularly so a missed wakeup cannot park this
+                 * thread forever. */
+                if (!filter->streaming)
+                    break;
+            }
+        }
 
         if (!filter->streaming)
         {
@@ -1515,7 +1523,7 @@ static DWORD CALLBACK stream_thread(void *arg)
 
         if (pin->eos)
         {
-            SleepConditionVariableCS(&pin->eos_cv, &pin->flushing_cs, INFINITE);
+            SleepConditionVariableCS(&pin->eos_cv, &pin->flushing_cs, 1000);
             LeaveCriticalSection(&pin->flushing_cs);
             continue;
         }
@@ -1751,7 +1759,8 @@ static HRESULT parser_cleanup_stream(struct strmbase_filter *iface)
         IMemAllocator_Decommit(pin->pin.pAllocator);
 
         WakeConditionVariable(&pin->eos_cv);
-        WaitForSingleObject(pin->thread, INFINITE);
+        if (WaitForSingleObject(pin->thread, 5000) == WAIT_TIMEOUT)
+            ERR("Streaming thread for pin %p did not exit in time.\n", pin);
         CloseHandle(pin->thread);
         pin->thread = NULL;
     }
@@ -2471,7 +2480,8 @@ static HRESULT GST_RemoveOutputPins(struct parser *This)
     /* read_thread() needs to stay alive to service any read requests GStreamer
      * sends, so we can only shut it down after GStreamer stops. */
     This->sink_connected = false;
-    WaitForSingleObject(This->read_thread, INFINITE);
+    if (WaitForSingleObject(This->read_thread, 5000) == WAIT_TIMEOUT)
+        ERR("Read thread did not exit in time.\n");
     CloseHandle(This->read_thread);
 
     This->source_count = 0;
