@@ -210,8 +210,22 @@ static NTSTATUS wg_parser_get_next_read_offset(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    while (parser->sink_connected && !parser->read_request.size)
-        pthread_cond_wait(&parser->read_cond, &parser->mutex);
+    {
+        ULONGLONG deadline = parser_now_ms() + 10000;
+
+        while (parser->sink_connected && !parser->read_request.size)
+        {
+            ULONGLONG now = parser_now_ms();
+
+            if (now >= deadline)
+            {
+                GST_WARNING("Timed out waiting for a read request, disconnecting.\n");
+                parser->sink_connected = false;
+                break;
+            }
+            parser_wait_cond(parser, &parser->read_cond, (unsigned int)(deadline - now));
+        }
+    }
 
     if (!parser->sink_connected)
     {
@@ -355,8 +369,21 @@ static GstBuffer *wait_parser_stream_buffer(struct wg_parser *parser, struct wg_
     /* Note that we can both have a buffer and stream->eos, in which case we
      * must return the buffer. */
 
-    while (stream->enabled && !(buffer = stream->buffer) && !stream->eos)
-        pthread_cond_wait(&stream->event_cond, &parser->mutex);
+    {
+        ULONGLONG deadline = parser_now_ms() + 10000;
+
+        while (stream->enabled && !(buffer = stream->buffer) && !stream->eos)
+        {
+            ULONGLONG now = parser_now_ms();
+
+            if (now >= deadline)
+            {
+                GST_WARNING("Timed out waiting for a stream buffer.\n");
+                break;
+            }
+            parser_wait_cond(parser, &stream->event_cond, (unsigned int)(deadline - now));
+        }
+    }
 
     return buffer;
 }
@@ -581,12 +608,14 @@ static ULONGLONG parser_now_ms(void)
 {
     struct timespec ts;
 
-    clock_gettime(CLOCK_MONOTONIC, &ts);
+    clock_gettime(CLOCK_REALTIME, &ts);
     return (ULONGLONG)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
-/* Wait on init_cond with a bounded timeout. Returns true if signalled, false on timeout. */
-static bool parser_wait_init_cond(struct wg_parser *parser, unsigned int timeout_ms)
+/* Wait on a condvar with a bounded timeout. Returns true if signalled,
+ * false if the timeout expired. Never waits forever, so a stuck producer
+ * cannot deadlock the calling thread. */
+static bool parser_wait_cond(struct wg_parser *parser, pthread_cond_t *cond, unsigned int timeout_ms)
 {
     struct timespec ts;
     int ret;
@@ -600,8 +629,13 @@ static bool parser_wait_init_cond(struct wg_parser *parser, unsigned int timeout
         ts.tv_nsec -= 1000000000L;
     }
 
-    ret = pthread_cond_timedwait(&parser->init_cond, &parser->mutex, &ts);
+    ret = pthread_cond_timedwait(cond, &parser->mutex, &ts);
     return ret != ETIMEDOUT;
+}
+
+static bool parser_wait_init_cond(struct wg_parser *parser, unsigned int timeout_ms)
+{
+    return parser_wait_cond(parser, &parser->init_cond, timeout_ms);
 }
 
 static bool parser_no_more_pads(struct wg_parser *parser)
@@ -610,7 +644,7 @@ static bool parser_no_more_pads(struct wg_parser *parser)
 
     for (i = 0; i < parser->stream_count; ++i)
     {
-                if (!parser->streams[i]->no_more_pads)
+        if (!parser->streams[i]->no_more_pads)
             return false;
     }
 
@@ -1078,8 +1112,21 @@ static GstFlowReturn sink_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *bu
     /* Allow this buffer to be flushed by GStreamer. We are effectively
      * implementing a queue object here. */
 
-    while (stream->enabled && !stream->flushing && stream->buffer)
-        pthread_cond_wait(&stream->event_empty_cond, &parser->mutex);
+    {
+        ULONGLONG deadline = parser_now_ms() + 10000;
+
+        while (stream->enabled && !stream->flushing && stream->buffer)
+        {
+            ULONGLONG now = parser_now_ms();
+
+            if (now >= deadline)
+            {
+                GST_WARNING("Timed out waiting for the previous buffer to be released.\n");
+                break;
+            }
+            parser_wait_cond(parser, &stream->event_empty_cond, (unsigned int)(deadline - now));
+        }
+    }
 
     if (!stream->enabled)
     {
@@ -1565,8 +1612,21 @@ static GstFlowReturn issue_read_request(struct wg_parser *parser, guint64 offset
      * the upstream pin to flush if necessary. We should never be blocked on
      * read_thread() not running. */
 
-    while (!parser->read_request.done)
-        pthread_cond_wait(&parser->read_done_cond, &parser->mutex);
+    {
+        ULONGLONG deadline = parser_now_ms() + 30000;
+
+        while (!parser->read_request.done)
+        {
+            ULONGLONG now = parser_now_ms();
+
+            if (now >= deadline)
+            {
+                GST_WARNING("Timed out waiting for the upstream read to complete.\n");
+                break;
+            }
+            parser_wait_cond(parser, &parser->read_done_cond, (unsigned int)(deadline - now));
+        }
+    }
 
     *buffer = parser->read_request.buffer;
     ret = parser->read_request.ret;
@@ -2190,8 +2250,22 @@ static NTSTATUS wg_parser_connect(void *args)
 
     pthread_mutex_lock(&parser->mutex);
 
-    while (!parser_no_more_pads(parser) && !parser->error)
-        pthread_cond_wait(&parser->init_cond, &parser->mutex);
+    {
+        ULONGLONG deadline = parser_now_ms() + 30000;
+
+        while (!parser_no_more_pads(parser) && !parser->error)
+        {
+            ULONGLONG now = parser_now_ms();
+
+            if (now >= deadline)
+            {
+                GST_WARNING("Timed out waiting for pads, continuing with %u stream(s).\n",
+                        parser->stream_count);
+                break;
+            }
+            parser_wait_init_cond(parser, (unsigned int)(deadline - now));
+        }
+    }
     if (parser->error)
     {
         if (!parser->use_mediaconv && !parser->is_web_scheme)
@@ -2204,6 +2278,7 @@ static NTSTATUS wg_parser_connect(void *args)
     {
         struct wg_parser_stream *stream = parser->streams[i];
         gint64 duration;
+        ULONGLONG duration_deadline;
 
         /* Rebased streams need a first buffer or gap to determine the common PTS
          * origin. Do not wait for it forever though: streams that never produce
@@ -2252,6 +2327,8 @@ static NTSTATUS wg_parser_connect(void *args)
          * send duration-changed.
          */
 
+        duration_deadline = parser_now_ms() + 20000;
+
         for (;;)
         {
             if (parser->error)
@@ -2279,13 +2356,25 @@ static NTSTATUS wg_parser_connect(void *args)
              * the query succeeds. */
             if (parser->has_duration)
             {
+                if (parser_now_ms() >= duration_deadline)
+                {
+                    GST_WARNING("Timed out polling for stream duration.\n");
+                    break;
+                }
                 pthread_mutex_unlock(&parser->mutex);
                 g_usleep(10000);
                 pthread_mutex_lock(&parser->mutex);
             }
             else
             {
-                pthread_cond_wait(&parser->init_cond, &parser->mutex);
+                ULONGLONG now = parser_now_ms();
+
+                if (now >= duration_deadline)
+                {
+                    GST_WARNING("Timed out waiting for stream duration.\n");
+                    break;
+                }
+                parser_wait_init_cond(parser, (unsigned int)(duration_deadline - now));
             }
         }
 
