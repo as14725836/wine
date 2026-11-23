@@ -1829,14 +1829,12 @@ static void flush_context( TEB *teb, void (*flush)(void) )
 void wrap_glFinish( TEB *teb )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    resolve_default_fbo( teb );
     flush_context( teb, funcs->p_glFinish );
 }
 
 void wrap_glFlush( TEB *teb )
 {
     const struct opengl_funcs *funcs = teb->glTable;
-    resolve_default_fbo( teb );
     flush_context( teb, funcs->p_glFlush );
 }
 
@@ -2719,11 +2717,6 @@ GLenum wow64_glClientWaitSync( TEB *teb, GLsync sync, GLbitfield flags, GLuint64
     struct wgl_handle *handle;
 
     if (!(handle = get_sync_ptr( teb, sync ))) return GL_INVALID_VALUE;
-    /* Flush pending commands before waiting, otherwise the fence may never
-     * signal when the driver defers submission (notably wined3d). Use the
-     * same path as glFlush() so the driver context flush hook is honored. */
-    resolve_default_fbo( teb );
-    flush_context( teb, funcs->p_glFlush );
     return funcs->p_glClientWaitSync( handle->u.sync, flags, timeout );
 }
 
@@ -2774,12 +2767,7 @@ void wow64_glWaitSync( TEB *teb, GLsync sync, GLbitfield flags, GLuint64 timeout
     const struct opengl_funcs *funcs = teb->glTable;
     struct wgl_handle *handle;
 
-    if ((handle = get_sync_ptr( teb, sync )))
-    {
-        resolve_default_fbo( teb );
-        flush_context( teb, funcs->p_glFlush );
-        funcs->p_glWaitSync( handle->u.sync, flags, timeout );
-    }
+    if ((handle = get_sync_ptr( teb, sync ))) funcs->p_glWaitSync( handle->u.sync, flags, timeout );
 }
 
 static GLint get_buffer_param( TEB *teb, GLenum target, GLenum param )
