@@ -27,6 +27,8 @@
 #include "config.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <time.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -575,13 +577,40 @@ static NTSTATUS wg_parser_stream_notify_qos(void *args)
     return S_OK;
 }
 
+static ULONGLONG parser_now_ms(void)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (ULONGLONG)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+/* Wait on init_cond with a bounded timeout. Returns true if signalled, false on timeout. */
+static bool parser_wait_init_cond(struct wg_parser *parser, unsigned int timeout_ms)
+{
+    struct timespec ts;
+    int ret;
+
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += timeout_ms / 1000;
+    ts.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (ts.tv_nsec >= 1000000000L)
+    {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000L;
+    }
+
+    ret = pthread_cond_timedwait(&parser->init_cond, &parser->mutex, &ts);
+    return ret != ETIMEDOUT;
+}
+
 static bool parser_no_more_pads(struct wg_parser *parser)
 {
     unsigned int i;
 
     for (i = 0; i < parser->stream_count; ++i)
     {
-        if (!parser->streams[i]->no_more_pads)
+                if (!parser->streams[i]->no_more_pads)
             return false;
     }
 
@@ -2176,10 +2205,28 @@ static NTSTATUS wg_parser_connect(void *args)
         struct wg_parser_stream *stream = parser->streams[i];
         gint64 duration;
 
-        /* Rebased streams need a first buffer or gap to determine the common PTS origin. */
-        while (!parser->error && !stream->eos && !stream->has_buffer && !stream->has_initial_gap
-                && (parser->pts_rebased || !stream->current_caps || !stream->has_tags))
-            pthread_cond_wait(&parser->init_cond, &parser->mutex);
+        /* Rebased streams need a first buffer or gap to determine the common PTS
+         * origin. Do not wait for it forever though: streams that never produce
+         * a buffer (audio-only streams without a GAP event, or streams reaching
+         * EOS during preroll) would otherwise hang stream_connect() and the
+         * player would appear frozen. Cap the wait and carry on with
+         * GST_CLOCK_TIME_NONE as the base PTS in that case. */
+        {
+            ULONGLONG deadline = parser_now_ms() + 5000;
+
+            while (!parser->error && !stream->eos && !stream->has_buffer && !stream->has_initial_gap
+                    && (parser->pts_rebased || !stream->current_caps || !stream->has_tags))
+            {
+                ULONGLONG now = parser_now_ms();
+
+                if (now >= deadline)
+                {
+                    GST_WARNING("Timed out waiting for initial data on stream %u, continuing.", i);
+                    break;
+                }
+                parser_wait_init_cond(parser, (unsigned int)(deadline - now));
+            }
+        }
 
         /* GStreamer doesn't actually provide any guarantees about when duration
          * is available, even for seekable streams. It's basically built for
