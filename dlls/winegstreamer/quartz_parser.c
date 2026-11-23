@@ -1500,16 +1500,8 @@ static DWORD CALLBACK stream_thread(void *arg)
 
         EnterCriticalSection(&filter->streaming_cs);
 
-        while (filter->flushing)
-        {
-            if (!SleepConditionVariableCS(&filter->flushing_cv, &filter->streaming_cs, 1000))
-            {
-                /* Re-check the state regularly so a missed wakeup cannot park this
-                 * thread forever. */
-                if (!filter->streaming)
-                    break;
-            }
-        }
+        while (filter->flushing && filter->streaming)
+            SleepConditionVariableCS(&filter->flushing_cv, &filter->streaming_cs, 1000);
 
         if (!filter->streaming)
         {
