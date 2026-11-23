@@ -417,10 +417,10 @@ static BOOL copy_context_attributes( TEB *teb, const struct opengl_funcs *funcs,
     if (mask & GL_HINT_BIT)
     {
         if (src->hint.perspective_correction) funcs->p_glHint( GL_PERSPECTIVE_CORRECTION_HINT, src->hint.perspective_correction );
-        if (src->hint.point_smooth)           funcs->p_glHint( GL_POINT_SMOOTH_HINT, src->hint.point_smooth );
-        if (src->hint.line_smooth)            funcs->p_glHint( GL_LINE_SMOOTH_HINT, src->hint.line_smooth );
-        if (src->hint.polygon_smooth)         funcs->p_glHint( GL_POLYGON_SMOOTH_HINT, src->hint.polygon_smooth );
-        if (src->hint.fog)                    funcs->p_glHint( GL_FOG_HINT, src->hint.fog );
+        if (src->hint.point_smooth)           funcs->p_glHint( GL_POINT_SMOOTH_HINT, src->hint.perspective_correction );
+        if (src->hint.line_smooth)            funcs->p_glHint( GL_LINE_SMOOTH_HINT, src->hint.perspective_correction );
+        if (src->hint.polygon_smooth)         funcs->p_glHint( GL_POLYGON_SMOOTH_HINT, src->hint.perspective_correction );
+        if (src->hint.fog)                    funcs->p_glHint( GL_FOG_HINT, src->hint.perspective_correction );
         if (src->hint.multisample_nv)         funcs->p_glHint( GL_MULTISAMPLE_FILTER_HINT_NV, src->hint.multisample_nv );
         dst->hint = src->hint;
     }
@@ -581,9 +581,9 @@ static int *memdup_attribs( const int *attribs )
     int *copy;
 
     if (!(attr = attribs)) return NULL;
-    while (*attr) attr += 2;
+    while (*attr++) { /* nothing */ }
 
-    size = (attr - attribs + 1) * sizeof(*attr);
+    size = (attr - attribs) * sizeof(*attr);
     if (!(copy = malloc( size ))) return NULL;
     memcpy( copy, attribs, size );
     return copy;
