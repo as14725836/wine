@@ -24,9 +24,6 @@
 
 #include "config.h"
 
-#include <errno.h>
-#include <time.h>
-
 #include <assert.h>
 #include <stdarg.h>
 
@@ -89,29 +86,10 @@ static void release_memory_sample(WgAllocator *allocator, WgMemory *memory, bool
     if (!(sample = memory->sample))
         return;
 
+    while (sample->refcount > 1)
     {
-        /* The frontend normally unmaps quickly, but if it never does (for
-         * example because the rendering thread is itself stuck, or the app
-         * simply drops the sample without unmapping it) waiting here forever
-         * blocks the streaming thread and playback hangs. Give it a generous
-         * deadline and continue without copying the data back. */
-        struct timespec deadline;
-
-        clock_gettime(CLOCK_REALTIME, &deadline);
-        deadline.tv_sec += 5;
-
-        if (sample->refcount > 1)
-            GST_WARNING("Waiting for sample %p to be unmapped", sample);
-
-        while (sample->refcount > 1)
-        {
-            if (pthread_cond_timedwait(&allocator->release_cond, &allocator->mutex, &deadline) == ETIMEDOUT)
-            {
-                GST_WARNING("Gave up waiting for sample %p to be unmapped, refcount %u",
-                        sample, sample->refcount);
-                break;
-            }
-        }
+        GST_WARNING("Waiting for sample %p to be unmapped", sample);
+        pthread_cond_wait(&allocator->release_cond, &allocator->mutex);
     }
     InterlockedDecrement(&sample->refcount);
 
