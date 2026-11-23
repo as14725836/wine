@@ -925,8 +925,18 @@ NTSTATUS wg_transform_create(void *args)
         goto out;
 
     gst_element_set_state(transform->container, GST_STATE_PAUSED);
-    if (!gst_element_get_state(transform->container, NULL, NULL, -1))
-        goto out;
+    /* Bounded preroll: a decoder that never produces output must not wedge
+     * the transform creation thread forever. */
+    switch (gst_element_get_state(transform->container, NULL, NULL, 30 * GST_SECOND))
+    {
+        case GST_STATE_CHANGE_SUCCESS:
+            break;
+        case GST_STATE_CHANGE_ASYNC:
+            GST_WARNING("Timed out waiting for the transform to preroll.\n");
+            break;
+        default:
+            goto out;
+    }
 
     if (!(event = gst_event_new_stream_start("stream"))
             || !push_event(transform->my_src, event))
