@@ -355,6 +355,40 @@ static bool amt_from_wg_format_audio_wma(AM_MEDIA_TYPE *mt, const struct wg_form
     return true;
 }
 
+/* Register MPEG-4 (AAC) audio with DirectShow. wg_format_from_caps_audio_mpeg4()
+ * already stored a complete HEAACWAVEINFO plus AudioSpecificConfig in
+ * codec_data, so it can be copied verbatim after WAVEFORMATEX. */
+static bool amt_from_wg_format_audio_mpeg4(AM_MEDIA_TYPE *mt, const struct wg_format *format)
+{
+    DWORD size = sizeof(WAVEFORMATEX) + format->u.audio.codec_data_len;
+    WAVEFORMATEX *wave_format;
+    /* MFAudioFormat_Base with Data1 = WAVE_FORMAT_MPEG_RAW_AAC. */
+    GUID subtype = {WAVE_FORMAT_MPEG_RAW_AAC, 0x0000, 0x0010,
+                    {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
+
+    if (!format->u.audio.codec_data_len)
+        return false;
+    if (!(wave_format = CoTaskMemAlloc(size)))
+        return false;
+    memset(wave_format, 0, size);
+
+    mt->majortype = MEDIATYPE_Audio;
+    mt->subtype = subtype;
+    mt->formattype = FORMAT_WaveFormatEx;
+    mt->bFixedSizeSamples = TRUE;
+    mt->lSampleSize = 0;
+    mt->cbFormat = size;
+    mt->pbFormat = (BYTE *)wave_format;
+
+    wave_format->wFormatTag = WAVE_FORMAT_MPEG_RAW_AAC;
+    wave_format->nChannels = format->u.audio.channels;
+    wave_format->nSamplesPerSec = format->u.audio.rate;
+    wave_format->cbSize = format->u.audio.codec_data_len;
+    memcpy(wave_format + 1, format->u.audio.codec_data, format->u.audio.codec_data_len);
+
+    return true;
+}
+
 #define ALIGN(n, alignment) (((n) + (alignment) - 1) & ~((alignment) - 1))
 
 static unsigned int wg_format_get_max_size_video_raw(enum wg_video_format format, unsigned int width, unsigned int height)
@@ -474,6 +508,9 @@ unsigned int wg_format_get_max_size(const struct wg_format *format)
             return format->u.audio.rate * format->u.audio.channels * format->u.audio.depth / 8;
 
         case WG_MAJOR_TYPE_AUDIO_MPEG4:
+            /* One second of decoded PCM is a safe upper bound. */
+            return format->u.audio.rate * format->u.audio.channels *
+                   (format->u.audio.depth ? format->u.audio.depth : 16) / 8;
         case WG_MAJOR_TYPE_VIDEO_H264:
             FIXME("Format %u not implemented!\n", format->major_type);
             return 0;
@@ -809,7 +846,6 @@ bool amt_from_wg_format(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool 
 
     switch (format->major_type)
     {
-    case WG_MAJOR_TYPE_AUDIO_MPEG4:
     case WG_MAJOR_TYPE_VIDEO_H264:
         FIXME("Format %u not implemented!\n", format->major_type);
         /* fallthrough */
@@ -818,6 +854,9 @@ bool amt_from_wg_format(AM_MEDIA_TYPE *mt, const struct wg_format *format, bool 
 
     case WG_MAJOR_TYPE_AUDIO:
         return amt_from_wg_format_audio(mt, format);
+
+    case WG_MAJOR_TYPE_AUDIO_MPEG4:
+        return amt_from_wg_format_audio_mpeg4(mt, format);
 
     case WG_MAJOR_TYPE_AUDIO_MPEG1:
         return amt_from_wg_format_audio_mpeg1(mt, format);
