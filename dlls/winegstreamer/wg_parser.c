@@ -49,9 +49,8 @@
 
 #include "unix_private.h"
 
-/* Optional runtime overrides for the GStreamer pipeline. Both default to
- * off, so behaviour is unchanged unless the user explicitly opts in. Read
- * here on the Unix side, where getenv() is available. */
+/* Optional runtime override for GL post-processing. Read here on the Unix
+ * side, where getenv() is available. */
 static bool wg_env_enabled(const char *name)
 {
     const char *value = getenv(name);
@@ -686,55 +685,10 @@ static GstAutoplugSelectResult autoplug_select_cb(GstElement *bin, GstPad *pad,
         GST_INFO("Skipping \"Proton video converter\".");
         return GST_AUTOPLUG_SELECT_SKIP;
     }
-    if (wg_env_enabled("WINE_GST_NO_HWDEC")
-            && strstr(klass, GST_ELEMENT_FACTORY_KLASS_DECODER)
-            && gst_element_factory_get_static_pad_templates(fact))
+    if (is_hardware_decoder_factory(fact))
     {
-        const GList *entry;
-
-        /* Hardware decoders emit device-memory surfaces, advertised as
-         * "memory:VASurface" / "memory:GLMemory" / "memory:D3D11Memory".
-         * Software decoders (avdec_*) only produce system-memory video/x-raw.
-         * reject the former so decodebin falls back to the latter.
-         *
-         * The factory owns the template list. Each caps reference belongs to us. */
-        for (entry = gst_element_factory_get_static_pad_templates(fact);
-                entry; entry = entry->next)
-        {
-            GstStaticPadTemplate *pad_template = entry->data;
-            GstCaps *template_caps;
-            guint i;
-
-            if (pad_template->direction != GST_PAD_SRC
-                    || !(template_caps = gst_static_pad_template_get_caps(pad_template)))
-                continue;
-
-            for (i = 0; i < gst_caps_get_size(template_caps); ++i)
-            {
-                GstCapsFeatures *features = gst_caps_get_features(template_caps, i);
-                static const char *const hw_memories[] =
-                {
-                    "memory:VASurface", "memory:GLMemory", "memory:D3D11Memory",
-                    "memory:EGLImage", "memory:DMABuf", "memory:QSV",
-                };
-                guint j;
-
-                if (!features || gst_caps_features_contains(features,
-                        GST_CAPS_FEATURE_MEMORY_SYSTEM_MEMORY))
-                    continue;
-                for (j = 0; j < ARRAY_SIZE(hw_memories); ++j)
-                {
-                    if (gst_caps_features_contains(features, hw_memories[j]))
-                    {
-                        GST_WARNING("WINE_GST_NO_HWDEC: skipping \"%s\" (%s).",
-                                name, hw_memories[j]);
-                        gst_caps_unref(template_caps);
-                        return GST_AUTOPLUG_SELECT_SKIP;
-                    }
-                }
-            }
-            gst_caps_unref(template_caps);
-        }
+        GST_INFO("Skipping hardware decoder \"%s\"; using software decoding.", name);
+        return GST_AUTOPLUG_SELECT_SKIP;
     }
 
     if (!parser->sink_caps && strstr(klass, GST_ELEMENT_FACTORY_KLASS_DEMUXER))
@@ -1506,7 +1460,7 @@ static bool stream_decodebin_create(struct wg_parser_stream *stream)
     gst_bin_add(GST_BIN(parser->container), stream->decodebin);
 
     g_signal_connect(stream->decodebin, "pad-added", G_CALLBACK(stream_decodebin_pad_added_cb), stream);
-    g_signal_connect(stream->decodebin, "autoplug-select", G_CALLBACK(autoplug_select_cb), stream);
+    g_signal_connect(stream->decodebin, "autoplug-select", G_CALLBACK(autoplug_select_cb), parser);
     g_signal_connect(stream->decodebin, "no-more-pads", G_CALLBACK(stream_decodebin_no_more_pads_cb), stream);
 
     pthread_mutex_lock(&parser->mutex);

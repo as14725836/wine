@@ -27,6 +27,7 @@
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <string.h>
 
 #define GLIB_VERSION_MIN_REQUIRED GLIB_VERSION_2_30
 #include <gst/gst.h>
@@ -93,6 +94,79 @@ GstElement *factory_create_element(GstElementFactory *factory)
     return element;
 }
 
+bool is_hardware_decoder_factory(GstElementFactory *factory)
+{
+    static const char *const hw_names[] =
+    {
+        "vaapi", "vah", "nv", "cuda", "d3d11", "d3d12", "v4l2", "msdk", "qsv",
+        "omx", "vtdec", "amf", "mfx", "vdpau", "vulkan", "mediacodec", "mpp",
+    };
+    static const char *const hw_memories[] =
+    {
+        "memory:VASurface", "memory:VAMemory", "memory:GLMemory",
+        "memory:D3D11Memory", "memory:D3D12Memory", "memory:CUDAMemory",
+        "memory:EGLImage", "memory:DMABuf", "memory:QSV", "memory:NVMM",
+        "memory:VulkanImage",
+    };
+    const char *klass, *name;
+    const GList *entry;
+    guint i, j;
+
+    if (!factory)
+        return false;
+    klass = gst_element_factory_get_klass(factory);
+    name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+    if (!klass || !strstr(klass, GST_ELEMENT_FACTORY_KLASS_DECODER))
+        return false;
+
+    /* GStreamer marks hardware decoder factories explicitly in their klass. */
+    if (strstr(klass, "Hardware"))
+        return true;
+
+    /* A few plugins do not expose a hardware klass or memory feature. Keep
+     * their well-known factory prefixes out of the decoder selection too. */
+    for (i = 0; i < ARRAY_SIZE(hw_names); ++i)
+    {
+        if (name && !strncmp(name, hw_names[i], strlen(hw_names[i])))
+            return true;
+    }
+
+    /* Some third-party plugins omit the Hardware klass but advertise
+     * device-memory output caps. Do not mistake a system-memory alternative
+     * in the same caps for a software decoder. */
+    for (entry = gst_element_factory_get_static_pad_templates(factory); entry; entry = entry->next)
+    {
+        GstStaticPadTemplate *pad_template = entry->data;
+        GstCaps *caps;
+
+        if (pad_template->direction != GST_PAD_SRC
+                || !(caps = gst_static_pad_template_get_caps(pad_template)))
+            continue;
+
+        for (i = 0; i < gst_caps_get_size(caps); ++i)
+        {
+            const GstCapsFeatures *features = gst_caps_get_features(caps, i);
+
+            /* ANY does not describe a device-memory surface; asking
+             * gst_caps_features_contains() about it would match every name. */
+            if (!features || gst_caps_features_is_any(features))
+                continue;
+
+            for (j = 0; j < ARRAY_SIZE(hw_memories); ++j)
+            {
+                if (gst_caps_features_contains(features, hw_memories[j]))
+                {
+                    gst_caps_unref(caps);
+                    return true;
+                }
+            }
+        }
+        gst_caps_unref(caps);
+    }
+
+    return false;
+}
+
 GList *find_element_factories(GstElementFactoryListType type, GstRank min_rank,
         GstCaps *element_sink_caps, GstCaps *element_src_caps)
 {
@@ -147,6 +221,12 @@ GstElement *find_element(GstElementFactoryListType type, GstCaps *element_sink_c
              * requirements. Ignore it and use VA-API decoders directly instead.
              */
             GST_WARNING("Ignoring vaapidecodebin decoder.");
+            continue;
+        }
+
+        if (is_hardware_decoder_factory(GST_ELEMENT_FACTORY(tmp->data)))
+        {
+            GST_WARNING("Skipping hardware decoder factory %s.", name);
             continue;
         }
 
