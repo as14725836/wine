@@ -300,18 +300,6 @@ enum wined3d_fence_result wined3d_fence_wait(const struct wined3d_fence *fence,
                 ret = WINED3D_FENCE_OK;
                 break;
 
-            case GL_WAIT_FAILED:
-                /* Some drivers (zink/lavapipe on Android) fail the sync
-                 * object when waited from a different GL context than the
-                 * one that created it. Fall back to glFinish(), which
-                 * synchronously completes all outstanding GL work, so the
-                 * caller can always make progress instead of stalling. */
-                WARN("glClientWaitSync failed, falling back to glFinish.\n");
-                GL_EXTCALL(glFinish());
-                checkGLcall("glFinish");
-                ret = WINED3D_FENCE_OK;
-                break;
-
                 /* We don't expect a timeout for a ~292 year wait */
             default:
                 ERR("glClientWaitSync returned %#x.\n", gl_ret);
