@@ -1058,6 +1058,7 @@ NTSTATUS wg_transform_set_output_type(void *args)
     if (!gst_pad_peer_query(transform->my_src, transform->drain_query))
     {
         GST_ERROR("Failed to drain transform %p.", transform);
+        gst_caps_unref(caps);
         return STATUS_UNSUCCESSFUL;
     }
 
