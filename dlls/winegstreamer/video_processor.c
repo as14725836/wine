@@ -510,6 +510,8 @@ static ULONG WINAPI video_processor_Release(IMFTransform *iface)
 
     if (!refcount)
     {
+        if (impl->input_sample)
+            IMFSample_Release(impl->input_sample);
         video_processor_uninit_allocator(impl);
         if (impl->device_manager)
             IUnknown_Release(impl->device_manager);
@@ -909,6 +911,17 @@ static HRESULT WINAPI video_processor_ProcessMessage(IMFTransform *iface, MFT_ME
 
     switch (message)
     {
+    case MFT_MESSAGE_COMMAND_FLUSH:
+        if (processor->input_sample)
+        {
+            IMFSample_Release(processor->input_sample);
+            processor->input_sample = NULL;
+        }
+        hr = processor->wg_transform ? wg_transform_flush(processor->wg_transform) : S_OK;
+        if (SUCCEEDED(hr))
+            wg_sample_queue_flush(processor->wg_sample_queue, false);
+        return hr;
+
     case MFT_MESSAGE_SET_D3D_MANAGER:
         if (FAILED(hr = video_processor_uninit_allocator(processor)))
             return hr;

@@ -497,6 +497,7 @@ static HRESULT WINAPI transform_ProcessEvent(IMFTransform *iface, DWORD id, IMFM
 static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
     struct video_encoder *encoder = impl_from_IMFTransform(iface);
+    HRESULT hr;
 
     TRACE("iface %p, message %#x, param %Ix.\n", iface, message, param);
 
@@ -506,7 +507,11 @@ static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_
             return encoder->wg_transform ? wg_transform_drain(encoder->wg_transform) : MF_E_TRANSFORM_TYPE_NOT_SET;
 
         case MFT_MESSAGE_COMMAND_FLUSH:
-            return encoder->wg_transform ? wg_transform_flush(encoder->wg_transform) : MF_E_TRANSFORM_TYPE_NOT_SET;
+            if (!encoder->wg_transform)
+                return MF_E_TRANSFORM_TYPE_NOT_SET;
+            if (SUCCEEDED(hr = wg_transform_flush(encoder->wg_transform)))
+                wg_sample_queue_flush(encoder->wg_sample_queue, false);
+            return hr;
 
         default:
             FIXME("Ignoring message %#x.\n", message);

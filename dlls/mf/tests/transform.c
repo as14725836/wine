@@ -9212,6 +9212,104 @@ failed:
     CoUninitialize();
 }
 
+static void test_video_processor_flush(BOOL use_2d_buffer)
+{
+    const struct attribute_desc input_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video, .required = TRUE),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_NV12, .required = TRUE),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96, .required = TRUE),
+        {0},
+    };
+    const struct attribute_desc output_desc[] =
+    {
+        ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video, .required = TRUE),
+        ATTR_GUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32, .required = TRUE),
+        ATTR_RATIO(MF_MT_FRAME_SIZE, 96, 96, .required = TRUE),
+        {0},
+    };
+    BYTE input_data[96 * 96 * 3 / 2] = {0};
+    IMFSample *input_sample, *fresh_sample, *output_sample;
+    MFT_OUTPUT_STREAM_INFO output_info;
+    IMFTransform *transform;
+    DWORD output_status;
+    ULONG ref;
+    HRESULT hr;
+
+    if (use_2d_buffer && !pMFCreateMediaBufferFromMediaType)
+    {
+        win_skip("MFCreateMediaBufferFromMediaType() is unsupported.\n");
+        return;
+    }
+
+    hr = CoInitialize(NULL);
+    ok(hr == S_OK, "Failed to initialize, hr %#lx.\n", hr);
+    winetest_push_context("videoproc flush %s", use_2d_buffer ? "2d" : "1d");
+
+    if (FAILED(hr = CoCreateInstance(&CLSID_VideoProcessorMFT, NULL, CLSCTX_INPROC_SERVER,
+            &IID_IMFTransform, (void **)&transform)))
+    {
+        win_skip("Failed to create video processor, hr %#lx.\n", hr);
+        goto done;
+    }
+
+    check_mft_set_input_type(transform, input_desc, S_OK);
+    check_mft_set_output_type(transform, output_desc, S_OK);
+    hr = IMFTransform_GetOutputStreamInfo(transform, 0, &output_info);
+    ok(hr == S_OK, "GetOutputStreamInfo returned %#lx.\n", hr);
+    if (FAILED(hr))
+        goto release_transform;
+
+    input_sample = create_sample_(input_data, sizeof(input_data), use_2d_buffer ? input_desc : NULL);
+    hr = IMFSample_SetSampleTime(input_sample, 0);
+    ok(hr == S_OK, "SetSampleTime returned %#lx.\n", hr);
+    hr = IMFSample_SetSampleDuration(input_sample, 10000000);
+    ok(hr == S_OK, "SetSampleDuration returned %#lx.\n", hr);
+
+    hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
+    ok(hr == S_OK, "ProcessInput returned %#lx.\n", hr);
+    hr = IMFTransform_ProcessMessage(transform, MFT_MESSAGE_COMMAND_FLUSH, 0);
+    ok(hr == S_OK, "Flush returned %#lx.\n", hr);
+    EXPECT_REF(input_sample, 1);
+
+    output_sample = create_sample_(NULL, output_info.cbSize, use_2d_buffer ? output_desc : NULL);
+    hr = check_mft_process_output(transform, output_sample, &output_status);
+    ok(hr == MF_E_TRANSFORM_NEED_MORE_INPUT, "ProcessOutput returned %#lx.\n", hr);
+    ok(!output_status, "Unexpected output status %#lx.\n", output_status);
+    ref = IMFSample_Release(output_sample);
+    ok(!ref, "Release returned %lu.\n", ref);
+
+    hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
+    ok(hr == S_OK, "ProcessInput returned %#lx.\n", hr);
+    hr = IMFTransform_ProcessMessage(transform, MFT_MESSAGE_COMMAND_FLUSH, 0);
+    ok(hr == S_OK, "Flush returned %#lx.\n", hr);
+    EXPECT_REF(input_sample, 1);
+
+    /* Submit a different sample before ProcessOutput can consume any stale input. */
+    fresh_sample = create_sample_(input_data, sizeof(input_data), use_2d_buffer ? input_desc : NULL);
+    hr = IMFSample_SetSampleTime(fresh_sample, 10000000);
+    ok(hr == S_OK, "SetSampleTime returned %#lx.\n", hr);
+    hr = IMFSample_SetSampleDuration(fresh_sample, 10000000);
+    ok(hr == S_OK, "SetSampleDuration returned %#lx.\n", hr);
+    hr = IMFTransform_ProcessInput(transform, 0, fresh_sample, 0);
+    ok(hr == S_OK, "ProcessInput returned %#lx.\n", hr);
+
+    ref = IMFTransform_Release(transform);
+    ok(!ref, "Release returned %lu.\n", ref);
+    EXPECT_REF(fresh_sample, 1);
+    ref = IMFSample_Release(fresh_sample);
+    ok(!ref, "Release returned %lu.\n", ref);
+    ref = IMFSample_Release(input_sample);
+    ok(!ref, "Release returned %lu.\n", ref);
+    goto done;
+
+release_transform:
+    IMFTransform_Release(transform);
+done:
+    winetest_pop_context();
+    CoUninitialize();
+}
+
 static void test_video_processor(BOOL use_2d_buffer)
 {
     const GUID *const class_id = &CLSID_VideoProcessorMFT;
@@ -12431,6 +12529,8 @@ START_TEST(transform)
     test_color_convert(TRUE);
     test_video_processor(FALSE);
     test_video_processor(TRUE);
+    test_video_processor_flush(FALSE);
+    test_video_processor_flush(TRUE);
     test_mp3_decoder();
 
     test_h264_with_dxgi_manager();

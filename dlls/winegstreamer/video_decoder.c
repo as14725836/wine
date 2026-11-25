@@ -869,7 +869,11 @@ static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_
         return decoder->wg_transform ? wg_transform_drain(decoder->wg_transform) : MF_E_TRANSFORM_TYPE_NOT_SET;
 
     case MFT_MESSAGE_COMMAND_FLUSH:
-        return decoder->wg_transform ? wg_transform_flush(decoder->wg_transform) : MF_E_TRANSFORM_TYPE_NOT_SET;
+        if (!decoder->wg_transform)
+            return MF_E_TRANSFORM_TYPE_NOT_SET;
+        if (SUCCEEDED(hr = wg_transform_flush(decoder->wg_transform)))
+            wg_sample_queue_flush(decoder->wg_sample_queue, false);
+        return hr;
 
     case MFT_MESSAGE_NOTIFY_START_OF_STREAM:
         decoder->sample_time = -1;

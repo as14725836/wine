@@ -532,18 +532,27 @@ static HRESULT WINAPI transform_ProcessEvent(IMFTransform *iface, DWORD id, IMFM
 static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
     struct wma_decoder *decoder = impl_from_IMFTransform(iface);
+    HRESULT hr;
 
     TRACE("iface %p, message %#x, param %p.\n", iface, message, (void *)param);
 
     if (!decoder->wg_transform)
         return MF_E_TRANSFORM_TYPE_NOT_SET;
 
-    if (message == MFT_MESSAGE_COMMAND_DRAIN)
+    switch (message)
+    {
+    case MFT_MESSAGE_COMMAND_DRAIN:
         return wg_transform_drain(decoder->wg_transform);
 
-    FIXME("Ignoring message %#x.\n", message);
+    case MFT_MESSAGE_COMMAND_FLUSH:
+        if (SUCCEEDED(hr = wg_transform_flush(decoder->wg_transform)))
+            wg_sample_queue_flush(decoder->wg_sample_queue, false);
+        return hr;
 
-    return S_OK;
+    default:
+        FIXME("Ignoring message %#x.\n", message);
+        return S_OK;
+    }
 }
 
 static HRESULT WINAPI transform_ProcessInput(IMFTransform *iface, DWORD id, IMFSample *sample, DWORD flags)

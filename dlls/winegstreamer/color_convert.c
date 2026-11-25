@@ -629,8 +629,23 @@ static HRESULT WINAPI transform_ProcessEvent(IMFTransform *iface, DWORD id, IMFM
 
 static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
-    FIXME("iface %p, message %#x, param %#Ix stub!\n", iface, message, param);
-    return S_OK;
+    struct color_convert *impl = impl_from_IMFTransform(iface);
+    HRESULT hr;
+
+    TRACE("iface %p, message %#x, param %#Ix.\n", iface, message, param);
+
+    switch (message)
+    {
+    case MFT_MESSAGE_COMMAND_FLUSH:
+        hr = impl->wg_transform ? wg_transform_flush(impl->wg_transform) : S_OK;
+        if (SUCCEEDED(hr))
+            wg_sample_queue_flush(impl->wg_sample_queue, false);
+        return hr;
+
+    default:
+        FIXME("Ignoring message %#x.\n", message);
+        return S_OK;
+    }
 }
 
 static HRESULT WINAPI transform_ProcessInput(IMFTransform *iface, DWORD id, IMFSample *sample, DWORD flags)

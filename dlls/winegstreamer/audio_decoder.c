@@ -530,6 +530,7 @@ static HRESULT WINAPI transform_ProcessEvent(IMFTransform *iface, DWORD id, IMFM
 static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_TYPE message, ULONG_PTR param)
 {
     struct audio_decoder *decoder = impl_from_IMFTransform(iface);
+    HRESULT hr;
 
     TRACE("iface %p, message %#x, param %Ix.\n", iface, message, param);
 
@@ -539,7 +540,10 @@ static HRESULT WINAPI transform_ProcessMessage(IMFTransform *iface, MFT_MESSAGE_
         return wg_transform_drain(decoder->wg_transform);
 
     case MFT_MESSAGE_COMMAND_FLUSH:
-        return wg_transform_flush(decoder->wg_transform);
+        hr = decoder->wg_transform ? wg_transform_flush(decoder->wg_transform) : S_OK;
+        if (SUCCEEDED(hr))
+            wg_sample_queue_flush(decoder->wg_sample_queue, false);
+        return hr;
 
     default:
         FIXME("Ignoring message %#x.\n", message);
