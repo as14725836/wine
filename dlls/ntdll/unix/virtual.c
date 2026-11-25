@@ -841,20 +841,12 @@ static void reserve_area( void *addr, void *end )
 static void *wine_emulator_addr_space_limit(void)
 {
     const char *env = getenv( "WINE_EMULATOR_LIMIT" );
-    unsigned long long value;
-    char *end;
+    int valid;
+    unsigned long long limit = wine_emulator_limit( (ULONG_PTR)address_space_limit, &valid );
 
-    if (env && *env)
-    {
-        errno = 0;
-        value = strtoull( env, &end, 0 );
-        /* Keep the bound aligned and leave room for the shared user data page. */
-        if (*env >= '0' && *env <= '9' && !errno && !*end && value <= ~(ULONG_PTR)0 &&
-            value >= (ULONG_PTR)user_shared_data + page_size && !(value & granularity_mask))
-            return (void *)(ULONG_PTR)value;
+    if (env && *env && !valid)
         WARN( "Invalid WINE_EMULATOR_LIMIT %s, using the default.\n", debugstr_a( env ) );
-    }
-    return address_space_limit;
+    return min( address_space_limit, (void *)(ULONG_PTR)limit );
 }
 
 static void mmap_init( const struct preload_info *preload_info )
@@ -908,7 +900,8 @@ static void mmap_init( const struct preload_info *preload_info )
     /* if we don't have a preloader, try to reserve the space now */
     reserve_area( (void *)0x000000010000, (void *)0x000068000000 );
     reserve_area( (void *)0x00007f000000, (void *)0x00007fff0000 );
-    reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
+    if (!wine_emulator_detected())
+        reserve_area( (void *)0x7ffffe000000, (void *)0x7fffffff0000 );
 
 #endif
 }
@@ -3013,10 +3006,13 @@ static NTSTATUS map_pe_header( void *ptr, size_t size, size_t map_size, int fd, 
 /***********************************************************************
  *           get_host_addr_space_limit
  */
-static void *get_host_addr_space_limit(void)
+static void *get_host_addr_space_limit( void *limit )
 {
     unsigned int flags = MAP_PRIVATE | MAP_ANON;
     UINT_PTR addr = (UINT_PTR)1 << 63;
+
+    /* Do not probe unreachable addresses at or above an emulator's initial cap. */
+    while (addr >= (UINT_PTR)limit) addr >>= 1;
 
 #ifdef MAP_FIXED_NOREPLACE
     flags |= MAP_FIXED_NOREPLACE;
@@ -3033,7 +3029,7 @@ static void *get_host_addr_space_limit(void)
         else if (errno == EEXIST) break;
         addr >>= 1;
     }
-    return (void *)((addr << 1) - (granularity_mask + 1));
+    return min( limit, (void *)((addr << 1) - (granularity_mask + 1)) );
 }
 
 #endif /* _WIN64 */
@@ -3882,7 +3878,14 @@ static void *alloc_virtual_heap( SIZE_T size )
         void *end = (char *)base + area->size;
 
         if (is_beyond_limit( base, area->size, address_space_limit ))
-            address_space_limit = host_addr_space_limit = end;
+        {
+            if (wine_emulator_detected())
+            {
+                if (base >= address_space_limit) continue;
+                end = address_space_limit;
+            }
+            else address_space_limit = host_addr_space_limit = end;
+        }
         if (is_win64 && base < (void *)0x80000000) break;
         if (preload_reserve_end >= end)
         {
@@ -3930,7 +3933,8 @@ void virtual_init(void)
 #endif
 
 #ifdef _WIN64
-    host_addr_space_limit = get_host_addr_space_limit();
+    host_addr_space_limit = get_host_addr_space_limit( wine_emulator_detected() ?
+            wine_emulator_addr_space_limit() : (void *)~(UINT_PTR)0 );
     TRACE( "host addr space limit: %p\n", host_addr_space_limit );
 #else
     host_addr_space_limit = address_space_limit;
@@ -3938,10 +3942,10 @@ void virtual_init(void)
 
     if (wine_emulator_detected())
     {
-        void *limit = wine_emulator_addr_space_limit();
-
+#ifndef _WIN64
+        host_addr_space_limit = wine_emulator_addr_space_limit();
+#endif
         /* An emulator cap must not expand the Windows or detected host limits. */
-        host_addr_space_limit = min( host_addr_space_limit, limit );
         address_space_limit = min( address_space_limit, host_addr_space_limit );
         user_space_limit = min( user_space_limit, address_space_limit );
         working_set_limit = min( working_set_limit, user_space_limit );

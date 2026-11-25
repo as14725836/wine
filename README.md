@@ -158,6 +158,17 @@ shared memory is unavailable, fsync can use the Termux temporary directory
 separate directory for fsync, set `WINE_FSYNC_SHM_DIR` to an absolute,
 writable directory shared by wineserver and its clients.
 
+Under Box64, Wine also checks the emulated CPU brand to detect translation
+when no `BOX64_*` environment variables are set. Emulator mode skips Wine's
+fallback 47-bit high reservation and bounds startup address probes to the
+initial address space cap. `WINE_EMULATOR_LIMIT` can lower that cap using a
+64 KiB-aligned hexadecimal or decimal byte count (minimum `0x7fff0000`);
+invalid values fall back to the default. Use the same setting for Wine and
+wineserver, and stop the existing wineserver before changing it. Set
+`WINE_EMULATOR=box64` to force emulator mode, or `WINE_EMULATOR=0` to disable
+it. These settings reduce address mapping work; application performance
+still depends on the Box64 version, device and workload.
+
 Prefix initialization and updates do not prompt to download Wine Mono or
 Wine Gecko. Locally available addon packages are still installed. To request
 an installation manually, run:

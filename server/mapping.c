@@ -273,9 +273,15 @@ static inline mem_size_t round_size( mem_size_t size, mem_size_t mask )
     return (size + mask) & ~mask;
 }
 
-static void free_available_high_map_addr( client_ptr_t base, mem_size_t size )
+static void free_available_high_map_addr( client_ptr_t base, mem_size_t size, client_ptr_t limit )
 {
     unsigned int flags = MAP_PRIVATE | MAP_ANON;
+
+    while (base >= limit)
+    {
+        base >>= 1;
+        size >>= 1;
+    }
 
 #ifdef MAP_FIXED_NOREPLACE
     flags |= MAP_FIXED_NOREPLACE;
@@ -285,9 +291,9 @@ static void free_available_high_map_addr( client_ptr_t base, mem_size_t size )
     {
         void *ret = mmap( (void *)(UINT_PTR)base, host_page_mask + 1, PROT_NONE, flags, -1, 0 );
         if (ret != MAP_FAILED) munmap( ret, host_page_mask + 1 );
-        if ((ret != MAP_FAILED && ret >= (void *)(UINT_PTR)base) || errno == EEXIST)
+        if ((ret != MAP_FAILED && ret >= (void *)(UINT_PTR)base) || (ret == MAP_FAILED && errno == EEXIST))
         {
-            free_map_addr( base, size );
+            free_map_addr( base, min( size, limit - base ) );
             return;
         }
         base >>= 1;
@@ -299,8 +305,14 @@ void init_memory(void)
 {
     host_page_mask = sysconf( _SC_PAGESIZE ) - 1;
     free_map_addr( 0x60000000, 0x1c000000 );
-    if (wine_emulator_detected()) free_available_high_map_addr( 0x4000000000, 0x1000000000 );
-    else free_available_high_map_addr( 0x600000000000, 0x100000000000 );
+    if (wine_emulator_detected())
+    {
+        client_ptr_t limit = wine_emulator_limit( WINE_EMULATOR_DEFAULT_LIMIT, NULL );
+
+        free_available_high_map_addr( 0x4000000000, 0x1000000000, min( limit, WINE_EMULATOR_DEFAULT_LIMIT ) );
+    }
+    else
+        free_available_high_map_addr( 0x600000000000, 0x100000000000, ~(client_ptr_t)0 );
 }
 
 static void ranges_dump( struct object *obj, int verbose )
