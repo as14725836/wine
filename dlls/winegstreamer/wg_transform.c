@@ -1736,12 +1736,22 @@ static GstStateChangeReturn wg_stepper_change_state(GstElement *element, GstStat
     return GST_STATE_CHANGE_SUCCESS;
 }
 
+static void wg_stepper_finalize(GObject *object)
+{
+    WgStepper *stepper = WG_STEPPER(object);
+
+    wg_stepper_flush(stepper);
+    gst_atomic_queue_unref(stepper->fifo);
+
+    G_OBJECT_CLASS(wg_stepper_parent_class)->finalize(object);
+}
+
 static void wg_stepper_class_init(WgStepperClass *klass)
 {
     gst_element_class_set_metadata(GST_ELEMENT_CLASS(klass), "winegstreamer buffer stepper", "Connector",
         "Hold incoming buffer for manual pushing", "Yuxuan Shui <yshui@codeweavers.com>");
     klass->parent_class.change_state = wg_stepper_change_state;
-    (void)wg_stepper_parent_class; /* silence unused variable warning */
+    G_OBJECT_CLASS(klass)->finalize = wg_stepper_finalize;
 }
 
 static GstFlowReturn wg_stepper_chain_cb(GstPad *pad, GstObject *parent, GstBuffer *buf)
@@ -1772,9 +1782,13 @@ static gboolean wg_stepper_src_query_cb(GstPad *pad, GstObject *parent, GstQuery
 {
     WgStepper *this = WG_STEPPER(parent);
     GstPad *peer = gst_pad_get_peer(this->sink);
+    gboolean ret;
+
     if (!peer) return gst_pad_query_default(pad, parent, query);
     GST_TRACE("Forwarding query %"GST_PTR_FORMAT" to upstream", query);
-    return gst_pad_query(peer, query);
+    ret = gst_pad_query(peer, query);
+    gst_object_unref(peer);
+    return ret;
 }
 
 static void wg_stepper_init(WgStepper *stepper)
