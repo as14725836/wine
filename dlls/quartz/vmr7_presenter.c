@@ -118,6 +118,7 @@ static HRESULT WINAPI image_presenter_PresentImage(IVMRImagePresenter *iface,
     LONG current_frame;
     BOOL test_pattern;
     POINT point = {0, 0};
+    RECT *source = NULL;
     HRESULT hr;
     RECT rect;
     char pattern_env[16];
@@ -135,16 +136,23 @@ static HRESULT WINAPI image_presenter_PresentImage(IVMRImagePresenter *iface,
             info->dwTypeSpecificFlags, info->dwInterlaceFlags);
 
     if (info->dwFlags & VMRSample_SrcDstRectsValid)
-        FIXME("Ignoring src/dst rects.\n");
-
-    if (!GetClientRect(window, &rect))
+    {
+        source = &info->rcSrc;
+        rect = info->rcDst;
+        if (IsRectEmpty(source))
+        {
+            TRACE("Skipping frame: empty source rect %s.\n", wine_dbgstr_rect(source));
+            return S_OK;
+        }
+    }
+    else if (!GetClientRect(window, &rect))
     {
         TRACE("Skipping frame: GetClientRect failed for window %p, error %lu.\n", window, GetLastError());
         return S_OK;
     }
     if (IsRectEmpty(&rect))
     {
-        TRACE("Skipping frame: empty client rect %s for window %p.\n", wine_dbgstr_rect(&rect), window);
+        TRACE("Skipping frame: empty destination rect %s for window %p.\n", wine_dbgstr_rect(&rect), window);
         return S_OK;
     }
     if (!ClientToScreen(window, &point))
@@ -154,7 +162,7 @@ static HRESULT WINAPI image_presenter_PresentImage(IVMRImagePresenter *iface,
     }
     OffsetRect(&rect, point.x, point.y);
 
-    hr = IDirectDrawSurface7_Blt(presenter->primary, &rect, info->lpSurf, NULL, DDBLT_WAIT, NULL);
+    hr = IDirectDrawSurface7_Blt(presenter->primary, &rect, info->lpSurf, source, DDBLT_WAIT, NULL);
     if (FAILED(hr))
     {
         DDSURFACEDESC2 src_desc, dst_desc;

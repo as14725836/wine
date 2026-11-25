@@ -9310,6 +9310,208 @@ done:
     CoUninitialize();
 }
 
+static BOOL test_video_processor_aperture_sample(IMFSample *sample, BOOL use_2d_buffer, BOOL fill,
+        const SIZE *size, const MFVideoArea *aperture, BOOL nv12, LONG stride)
+{
+    static const BYTE values[] = {0x30, 0x60, 0x90, 0xc0};
+    unsigned int x, y, c, pixel_stride = nv12 ? 1 : 4, channels = nv12 ? 1 : 3;
+    unsigned int bad = 0, bad_x = 0, bad_y = 0, bad_value = 0, bad_expect = 0;
+    LONG left = aperture->OffsetX.value, top = aperture->OffsetY.value;
+    LONG width = aperture->Area.cx, height = aperture->Area.cy;
+    IMF2DBuffer2 *buffer2d = NULL;
+    BYTE *scanline, *data, *pixel, value;
+    IMFMediaBuffer *buffer;
+    LONGLONG first, last;
+    BOOL valid = FALSE;
+    DWORD length;
+    HRESULT hr;
+
+    hr = IMFSample_GetBufferByIndex(sample, 0, &buffer);
+    ok(hr == S_OK, "GetBufferByIndex returned %#lx.\n", hr);
+    if (FAILED(hr)) return FALSE;
+
+    if (use_2d_buffer)
+    {
+        hr = IMFMediaBuffer_QueryInterface(buffer, &IID_IMF2DBuffer2, (void **)&buffer2d);
+        ok(hr == S_OK, "QueryInterface returned %#lx.\n", hr);
+        if (FAILED(hr)) goto done;
+        hr = IMF2DBuffer2_Lock2DSize(buffer2d, fill ? MF2DBuffer_LockFlags_Write : MF2DBuffer_LockFlags_Read,
+                &scanline, &stride, &data, &length);
+    }
+    else
+    {
+        hr = IMFMediaBuffer_Lock(buffer, &data, &length, NULL);
+        if (SUCCEEDED(hr)) scanline = data + (stride < 0 ? (size->cy - 1) * -stride : 0);
+    }
+    ok(hr == S_OK, "Lock returned %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+
+    first = scanline - data;
+    last = first + (LONGLONG)(size->cy - 1) * stride;
+    valid = abs(stride) >= size->cx * pixel_stride && min(first, last) >= 0
+            && max(first, last) + size->cx * pixel_stride <= length;
+    if (nv12) valid = valid && stride > 0 && first + (LONGLONG)stride * (size->cy + size->cy / 2) <= length;
+    ok(valid, "Invalid buffer layout, stride %ld, length %lu.\n", stride, length);
+    if (!valid) goto unlock;
+
+    /* Keep chroma neutral, and make pixels outside the source aperture distinct. */
+    if (fill) memset(data, nv12 ? 0x80 : 0xe0, length);
+    for (y = 0; y < size->cy; ++y)
+    {
+        for (x = 0; x < size->cx; ++x)
+        {
+            BOOL inside = x >= left && x < left + width && y >= top && y < top + height;
+
+            /* Avoid the scaler's interpolation footprint and undefined destination padding. */
+            if (!fill && (!inside || x < left + 2 || x >= left + width - 2
+                    || y < top + 2 || y >= top + height - 2
+                    || abs((int)x - left - width / 2) < 4 || abs((int)y - top - height / 2) < 4))
+                continue;
+            value = inside ? values[(y >= top + height / 2) * 2 + (x >= left + width / 2)] : 0xe0;
+            pixel = scanline + (LONG_PTR)y * stride + x * pixel_stride;
+            for (c = 0; c < channels; ++c)
+            {
+                if (fill) pixel[c] = value;
+                else if (abs(pixel[c] - value) > 2)
+                {
+                    if (!bad)
+                    {
+                        bad_x = x;
+                        bad_y = y;
+                        bad_value = pixel[c];
+                        bad_expect = value;
+                    }
+                    ++bad;
+                    break;
+                }
+            }
+        }
+    }
+    if (!fill) ok(!bad, "Got %u incorrect pixels, first (%u,%u) %#x, expected %#x.\n",
+            bad, bad_x, bad_y, bad_value, bad_expect);
+
+unlock:
+    hr = buffer2d ? IMF2DBuffer2_Unlock2D(buffer2d) : IMFMediaBuffer_Unlock(buffer);
+    ok(hr == S_OK, "Unlock returned %#lx.\n", hr);
+    if (FAILED(hr)) valid = FALSE;
+    if (fill && valid)
+    {
+        hr = IMFMediaBuffer_SetCurrentLength(buffer, size->cx * size->cy * (nv12 ? 3 : 8) / 2);
+        ok(hr == S_OK, "SetCurrentLength returned %#lx.\n", hr);
+        if (FAILED(hr)) valid = FALSE;
+    }
+done:
+    if (buffer2d) IMF2DBuffer2_Release(buffer2d);
+    IMFMediaBuffer_Release(buffer);
+    return valid;
+}
+
+static void test_video_processor_aperture(IMFTransform *transform, BOOL use_2d_buffer)
+{
+    static const struct
+    {
+        BOOL nv12;
+        SIZE input_size, output_size;
+        MFVideoArea input_aperture, output_aperture;
+        BOOL input_bottom_up, output_bottom_up;
+    }
+    tests[] =
+    {
+        { /* Equal visible sizes, independent asymmetric source and destination offsets. */
+            FALSE, {96, 96}, {96, 96},
+            {{0, 8}, {0, 16}, {64, 48}}, {{0, 16}, {0, 4}, {64, 48}}, FALSE, FALSE,
+        },
+        { /* Upscale from bottom-up RGB. */
+            FALSE, {96, 96}, {160, 128},
+            {{0, 8}, {0, 16}, {64, 48}}, {{0, 16}, {0, 8}, {128, 96}}, TRUE, FALSE,
+        },
+        { /* Downscale to bottom-up RGB. */
+            FALSE, {160, 128}, {96, 96},
+            {{0, 16}, {0, 8}, {128, 96}}, {{0, 8}, {0, 16}, {64, 48}}, FALSE, TRUE,
+        },
+        { /* NV12 origins and sizes are even, including the subsampled chroma plane. */
+            TRUE, {96, 96}, {160, 128},
+            {{0, 8}, {0, 16}, {64, 48}}, {{0, 16}, {0, 8}, {128, 96}}, FALSE, FALSE,
+        },
+        {
+            TRUE, {160, 128}, {96, 96},
+            {{0, 16}, {0, 8}, {128, 96}}, {{0, 8}, {0, 16}, {64, 48}}, FALSE, FALSE,
+        },
+    };
+    unsigned int i;
+    HRESULT hr;
+
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        const GUID *subtype = tests[i].nv12 ? &MFVideoFormat_NV12 : &MFVideoFormat_RGB32;
+        LONG input_stride = tests[i].input_size.cx * (tests[i].nv12 ? 1 : 4)
+                * (tests[i].input_bottom_up ? -1 : 1);
+        LONG output_stride = tests[i].output_size.cx * (tests[i].nv12 ? 1 : 4)
+                * (tests[i].output_bottom_up ? -1 : 1);
+        const struct attribute_desc input_desc[] =
+        {
+            ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+            ATTR_GUID(MF_MT_SUBTYPE, *subtype),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, tests[i].input_size.cx, tests[i].input_size.cy),
+            ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
+            ATTR_UINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, input_stride),
+            ATTR_BLOB(MF_MT_MINIMUM_DISPLAY_APERTURE, &tests[i].input_aperture, sizeof(MFVideoArea)),
+            {0},
+        };
+        const struct attribute_desc output_desc[] =
+        {
+            ATTR_GUID(MF_MT_MAJOR_TYPE, MFMediaType_Video),
+            ATTR_GUID(MF_MT_SUBTYPE, *subtype),
+            ATTR_RATIO(MF_MT_FRAME_SIZE, tests[i].output_size.cx, tests[i].output_size.cy),
+            ATTR_RATIO(MF_MT_PIXEL_ASPECT_RATIO, 1, 1),
+            ATTR_UINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive),
+            ATTR_UINT32(MF_MT_DEFAULT_STRIDE, output_stride),
+            ATTR_BLOB(MF_MT_MINIMUM_DISPLAY_APERTURE, &tests[i].output_aperture, sizeof(MFVideoArea)),
+            {0},
+        };
+        DWORD input_length = tests[i].input_size.cx * tests[i].input_size.cy * (tests[i].nv12 ? 3 : 8) / 2;
+        DWORD output_length = tests[i].output_size.cx * tests[i].output_size.cy * (tests[i].nv12 ? 3 : 8) / 2;
+        IMFSample *input_sample, *output_sample = NULL;
+        DWORD output_status;
+
+        winetest_push_context("aperture %u", i);
+        check_mft_set_input_type(transform, input_desc, S_OK);
+        check_mft_set_output_type(transform, output_desc, S_OK);
+
+        input_sample = create_sample_(NULL, input_length, use_2d_buffer ? input_desc : NULL);
+        if (!test_video_processor_aperture_sample(input_sample, use_2d_buffer, TRUE,
+                &tests[i].input_size, &tests[i].input_aperture, tests[i].nv12, input_stride))
+            goto next;
+        hr = IMFSample_SetSampleTime(input_sample, 0);
+        ok(hr == S_OK, "SetSampleTime returned %#lx.\n", hr);
+        hr = IMFSample_SetSampleDuration(input_sample, 10000000);
+        ok(hr == S_OK, "SetSampleDuration returned %#lx.\n", hr);
+        hr = IMFTransform_ProcessInput(transform, 0, input_sample, 0);
+        ok(hr == S_OK, "ProcessInput returned %#lx.\n", hr);
+        if (FAILED(hr)) goto next;
+        hr = IMFTransform_ProcessMessage(transform, MFT_MESSAGE_COMMAND_DRAIN, 0);
+        ok(hr == S_OK, "Drain returned %#lx.\n", hr);
+
+        output_sample = create_sample_(NULL, output_length, use_2d_buffer ? output_desc : NULL);
+        hr = check_mft_process_output(transform, output_sample, &output_status);
+        ok(hr == S_OK, "ProcessOutput returned %#lx.\n", hr);
+        if (SUCCEEDED(hr)) test_video_processor_aperture_sample(output_sample, use_2d_buffer, FALSE,
+                &tests[i].output_size, &tests[i].output_aperture, tests[i].nv12, output_stride);
+
+next:
+        if (output_sample) IMFSample_Release(output_sample);
+        IMFSample_Release(input_sample);
+        hr = IMFTransform_ProcessMessage(transform, MFT_MESSAGE_COMMAND_FLUSH, 0);
+        ok(hr == S_OK, "Flush returned %#lx.\n", hr);
+        hr = IMFTransform_SetInputType(transform, 0, NULL, 0);
+        ok(hr == S_OK, "SetInputType returned %#lx.\n", hr);
+        hr = IMFTransform_SetOutputType(transform, 0, NULL, 0);
+        ok(hr == S_OK, "SetOutputType returned %#lx.\n", hr);
+        winetest_pop_context();
+    }
+}
+
 static void test_video_processor(BOOL use_2d_buffer)
 {
     const GUID *const class_id = &CLSID_VideoProcessorMFT;
@@ -10476,6 +10678,8 @@ static void test_video_processor(BOOL use_2d_buffer)
         hr = IMFTransform_SetOutputType(transform, 0, NULL, 0);
         ok(hr == S_OK, "got %#lx\n", hr);
     }
+
+    test_video_processor_aperture(transform, use_2d_buffer);
 
     ret = IMFTransform_Release(transform);
     ok(ret == 0, "Release returned %ld\n", ret);

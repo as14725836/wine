@@ -1425,6 +1425,81 @@ static struct test_transfer_notify *create_transfer_notify(void)
     return object;
 }
 
+static void test_TransferVideoFrame_scaling(IMFMediaEngineEx *media_engine, ID3D11Device *device)
+{
+    static const unsigned int sample_rows[] = {4, 14, 22, 32, 40, 50, 58};
+    static const float clear_color[] = {0.25f, 0.5f, 0.75f, 1.0f};
+    ID3D11Texture2D *texture = NULL, *rb_texture = NULL;
+    ID3D11DeviceContext *context = NULL;
+    ID3D11RenderTargetView *rtv = NULL;
+    D3D11_MAPPED_SUBRESOURCE map_desc;
+    const BYTE *expect_data, *expect, *pixel;
+    D3D11_TEXTURE2D_DESC desc = {0};
+    RECT dst_rect = {0, 0, 128, 128};
+    unsigned int i, y;
+    HRSRC resource;
+    HRESULT hr;
+
+    resource = FindResourceW(NULL, L"rgb32frame.bmp", (const WCHAR *)RT_RCDATA);
+    ok(!!resource, "FindResourceW failed, error %lu.\n", GetLastError());
+    if (!resource) return;
+    expect_data = LockResource(LoadResource(GetModuleHandleW(NULL), resource));
+    ok(!!expect_data, "Failed to load reference image.\n");
+    if (!expect_data) return;
+    expect_data += *(const DWORD *)(expect_data + 2 + 2 * sizeof(DWORD));
+
+    desc.Width = 128;
+    desc.Height = 128;
+    desc.MipLevels = 1;
+    desc.ArraySize = 1;
+    desc.Format = DXGI_FORMAT_B8G8R8X8_UNORM;
+    desc.BindFlags = D3D11_BIND_RENDER_TARGET;
+    desc.SampleDesc.Count = 1;
+    hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &texture);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+    hr = ID3D11Device_CreateRenderTargetView(device, (ID3D11Resource *)texture, NULL, &rtv);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.BindFlags = 0;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    hr = ID3D11Device_CreateTexture2D(device, &desc, NULL, &rb_texture);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+    ID3D11Device_GetImmediateContext(device, &context);
+
+    /* A partial unscaled copy must not leave the sampled pixels untouched. */
+    ID3D11DeviceContext_ClearRenderTargetView(context, rtv, clear_color);
+    hr = IMFMediaEngineEx_TransferVideoFrame(media_engine, (IUnknown *)texture, NULL, &dst_rect, NULL);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+    ID3D11DeviceContext_CopyResource(context, (ID3D11Resource *)rb_texture, (ID3D11Resource *)texture);
+    hr = ID3D11DeviceContext_Map(context, (ID3D11Resource *)rb_texture, 0, D3D11_MAP_READ, 0, &map_desc);
+    ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);
+    if (FAILED(hr)) goto done;
+
+    /* Sample inside the color bands, away from interpolation boundaries, and ignore alpha. */
+    for (i = 0; i < ARRAY_SIZE(sample_rows); ++i)
+    {
+        y = sample_rows[i] * 2;
+        pixel = (const BYTE *)map_desc.pData + y * map_desc.RowPitch + 96 * 4;
+        expect = expect_data + (sample_rows[i] * 64 + 48) * 4;
+        ok(abs(pixel[0] - expect[0]) <= 2 && abs(pixel[1] - expect[1]) <= 2
+                && abs(pixel[2] - expect[2]) <= 2,
+                "Row %u: got RGB %02x%02x%02x, expected %02x%02x%02x.\n",
+                y, pixel[2], pixel[1], pixel[0], expect[2], expect[1], expect[0]);
+    }
+    ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)rb_texture, 0);
+
+done:
+    if (context) ID3D11DeviceContext_Release(context);
+    if (rb_texture) ID3D11Texture2D_Release(rb_texture);
+    if (rtv) ID3D11RenderTargetView_Release(rtv);
+    if (texture) ID3D11Texture2D_Release(texture);
+}
+
 static void test_TransferVideoFrame(BOOL add_extension)
 {
     struct test_transfer_notify *notify;
@@ -1540,6 +1615,8 @@ static void test_TransferVideoFrame(BOOL add_extension)
     res = check_rgb32_data(L"rgb32frame.bmp", map_desc.pData, map_desc.RowPitch * desc.Height, &dst_rect);
     ok(res == 0, "Unexpected %lu%% diff\n", res);
     ID3D11DeviceContext_Unmap(context, (ID3D11Resource *)rb_texture, 0);
+
+    test_TransferVideoFrame_scaling(media_engine, device);
 
     hr = IMFMediaEngineEx_SetVolume(media_engine, 0.5);
     ok(hr == S_OK, "Unexpected hr %#lx.\n", hr);

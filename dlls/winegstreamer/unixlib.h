@@ -358,6 +358,7 @@ struct wg_transform_attrs
     BOOL allow_format_change;
     BOOL low_latency;
     BOOL preserve_timestamps;
+    BOOL allow_video_scale;
 };
 
 struct wg_transform_create_params

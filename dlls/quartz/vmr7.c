@@ -184,20 +184,7 @@ static HRESULT vmr_render(struct strmbase_renderer *iface, IMediaSample *sample)
         return S_FALSE;
     }
 
-    info.dwFlags = VMR9Sample_SrcDstRectsValid;
-
-    time_valid = SUCCEEDED(hr = IMediaSample_GetTime(sample, &start_time, &end_time));
-    if (time_valid)
-        info.dwFlags |= VMR9Sample_TimeValid;
-
-    if (IMediaSample_IsDiscontinuity(sample) == S_OK)
-        info.dwFlags |= VMR9Sample_Discontinuity;
-
-    if (IMediaSample_IsPreroll(sample) == S_OK)
-        info.dwFlags |= VMR9Sample_Preroll;
-
-    if (IMediaSample_IsSyncPoint(sample) == S_OK)
-        info.dwFlags |= VMR9Sample_SyncPoint;
+    time_valid = SUCCEEDED(IMediaSample_GetTime(sample, &start_time, &end_time));
 
     if (FAILED(hr = IMediaSample_GetPointer(sample, &data)))
     {
@@ -231,6 +218,14 @@ static HRESULT vmr_render(struct strmbase_renderer *iface, IMediaSample *sample)
     }
     info.szAspectRatio.cx = width;
     info.szAspectRatio.cy = height;
+    if (filter->mode != VMRMode_Renderless)
+    {
+        info.dwFlags |= VMRSample_SrcDstRectsValid;
+        info.rcSrc = filter->window.src;
+        info.rcDst = filter->window.dst;
+        if (filter->mode == VMRMode_Windowless && filter->window.default_dst)
+            GetClientRect(filter->clipping_window, &info.rcDst);
+    }
     info.lpSurf = filter->surfaces[(--filter->surface_index) % filter->surface_count];
 
     hr = IVMRSurfaceAllocator_PrepareSurface(filter->allocator, filter->cookie, info.lpSurf, 0);
@@ -1131,14 +1126,17 @@ static HRESULT WINAPI windowless_control_SetVideoPosition(
 
     TRACE("filter %p, source %s, dest %s.\n", filter, wine_dbgstr_rect(source), wine_dbgstr_rect(dest));
 
-    EnterCriticalSection(&filter->renderer.filter.filter_cs);
+    EnterCriticalSection(&filter->renderer.filter.stream_cs);
 
     if (source)
         filter->window.src = *source;
     if (dest)
+    {
         filter->window.dst = *dest;
+        filter->window.default_dst = FALSE;
+    }
 
-    LeaveCriticalSection(&filter->renderer.filter.filter_cs);
+    LeaveCriticalSection(&filter->renderer.filter.stream_cs);
 
     return S_OK;
 }
@@ -1150,11 +1148,14 @@ static HRESULT WINAPI windowless_control_GetVideoPosition(
 
     TRACE("filter %p, source %p, dest %p.\n", filter, source, dest);
 
+    EnterCriticalSection(&filter->renderer.filter.stream_cs);
+
     if (source)
         *source = filter->window.src;
-
     if (dest)
         *dest = filter->window.dst;
+
+    LeaveCriticalSection(&filter->renderer.filter.stream_cs);
 
     return S_OK;
 }

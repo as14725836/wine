@@ -2641,10 +2641,12 @@ static HRESULT media_engine_transfer_d3d11(struct media_engine *engine, ID3D11Te
 
     if (!src_rect)
         src_rect = &src_rect_default;
-    if (!dst_rect)
-        dst_rect = &dst_rect_default;
     if (!color)
         color = &color_default;
+
+    if (!(src_rect->left >= 0.0f && src_rect->top >= 0.0f && src_rect->right <= 1.0f && src_rect->bottom <= 1.0f
+            && src_rect->left < src_rect->right && src_rect->top < src_rect->bottom))
+        return MF_E_UNEXPECTED;
 
     if (!video_frame_sink_get_sample(engine->presentation.frame_sink, &sample))
         return MF_E_UNEXPECTED;
@@ -2656,6 +2658,12 @@ static HRESULT media_engine_transfer_d3d11(struct media_engine *engine, ID3D11Te
     ID3D11Texture2D_GetDesc(src_texture, &src_desc);
     ID3D11Texture2D_GetDesc(dst_texture, &dst_desc);
 
+    if (!dst_rect)
+    {
+        SetRect(&dst_rect_default, 0, 0, dst_desc.Width, dst_desc.Height);
+        dst_rect = &dst_rect_default;
+    }
+
     src_box.left = src_rect->left * src_desc.Width;
     src_box.top = src_rect->top * src_desc.Height;
     src_box.front = 0;
@@ -2663,8 +2671,13 @@ static HRESULT media_engine_transfer_d3d11(struct media_engine *engine, ID3D11Te
     src_box.bottom = src_rect->bottom * src_desc.Height;
     src_box.back = 1;
 
-    if (dst_rect->left + src_box.right - src_box.left > dst_desc.Width ||
-            dst_rect->top + src_box.bottom - src_box.top > dst_desc.Height)
+    /* CopySubresourceRegion() cannot scale or clip the destination rectangle. */
+    if (src_box.left >= src_box.right || src_box.top >= src_box.bottom
+            || dst_rect->left < 0 || dst_rect->top < 0
+            || dst_rect->right <= dst_rect->left || dst_rect->bottom <= dst_rect->top
+            || dst_rect->right > dst_desc.Width || dst_rect->bottom > dst_desc.Height
+            || dst_rect->right - dst_rect->left != src_box.right - src_box.left
+            || dst_rect->bottom - dst_rect->top != src_box.bottom - src_box.top)
     {
         ID3D11Texture2D_Release(src_texture);
         return MF_E_UNEXPECTED;

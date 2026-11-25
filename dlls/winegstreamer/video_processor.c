@@ -99,27 +99,19 @@ struct video_processor
     IMFVideoProcessorControl IMFVideoProcessorControl_iface;
 };
 
-static void update_video_aperture(MFVideoInfo *input_info, MFVideoInfo *output_info)
+static void normalize_video_aperture(MFVideoInfo *info)
 {
-    RECT input_rect, output_rect;
+    RECT rect;
 
-    get_mf_video_content_rect(input_info, &input_rect);
-    get_mf_video_content_rect(output_info, &output_rect);
-
-    if (!EqualRect(&input_rect, &output_rect))
-    {
-        FIXME("Mismatched content size %s vs %s\n", wine_dbgstr_rect(&input_rect),
-                wine_dbgstr_rect(&output_rect));
-    }
-
-    input_info->MinimumDisplayAperture.OffsetX.value = input_rect.left;
-    input_info->MinimumDisplayAperture.OffsetY.value = input_rect.top;
-    input_info->MinimumDisplayAperture.Area.cx = input_rect.right - input_rect.left;
-    input_info->MinimumDisplayAperture.Area.cy = input_rect.bottom - input_rect.top;
-    output_info->MinimumDisplayAperture = input_info->MinimumDisplayAperture;
+    get_mf_video_content_rect(info, &rect);
+    info->MinimumDisplayAperture.OffsetX.value = rect.left;
+    info->MinimumDisplayAperture.OffsetY.value = rect.top;
+    info->MinimumDisplayAperture.Area.cx = rect.right - rect.left;
+    info->MinimumDisplayAperture.Area.cy = rect.bottom - rect.top;
 }
 
-static HRESULT normalize_media_types(BOOL bottom_up, IMFMediaType **input_type, IMFMediaType **output_type)
+static HRESULT normalize_media_types(BOOL bottom_up, IMFMediaType **input_type, IMFMediaType **output_type,
+        BOOL *needs_scaling)
 {
     MFVIDEOFORMAT *input_format, *output_format;
     BOOL normalize_input, normalize_output;
@@ -142,7 +134,12 @@ static HRESULT normalize_media_types(BOOL bottom_up, IMFMediaType **input_type, 
     if (bottom_up && normalize_output)
         output_format->videoInfo.VideoFlags |= MFVideoFlag_BottomUpLinearRep;
 
-    update_video_aperture(&input_format->videoInfo, &output_format->videoInfo);
+    normalize_video_aperture(&input_format->videoInfo);
+    normalize_video_aperture(&output_format->videoInfo);
+    *needs_scaling = input_format->videoInfo.MinimumDisplayAperture.Area.cx
+            != output_format->videoInfo.MinimumDisplayAperture.Area.cx
+            || input_format->videoInfo.MinimumDisplayAperture.Area.cy
+            != output_format->videoInfo.MinimumDisplayAperture.Area.cy;
 
     if (FAILED(hr = MFCreateVideoMediaType(input_format, (IMFVideoMediaType **)input_type)))
         goto done;
@@ -171,7 +168,7 @@ static HRESULT try_create_wg_transform(struct video_processor *impl)
         impl->wg_transform = 0;
     }
 
-    if (FAILED(hr = normalize_media_types(bottom_up, &input_type, &output_type)))
+    if (FAILED(hr = normalize_media_types(bottom_up, &input_type, &output_type, &attrs.allow_video_scale)))
         return hr;
     hr = wg_transform_create_mf(input_type, output_type, &attrs, &impl->wg_transform);
     IMFMediaType_Release(output_type);

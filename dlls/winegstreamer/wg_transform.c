@@ -121,8 +121,8 @@ static void align_video_info_planes(MFVideoInfo *video_info, gsize plane_align, 
     {
         align->padding_right = max(align->padding_right, video_info->dwWidth - aperture->OffsetX.value - aperture->Area.cx);
         align->padding_bottom = max(align->padding_bottom, video_info->dwHeight - aperture->OffsetY.value - aperture->Area.cy);
-        align->padding_top = aperture->OffsetX.value;
-        align->padding_left = aperture->OffsetY.value;
+        align->padding_left = aperture->OffsetX.value;
+        align->padding_top = aperture->OffsetY.value;
     }
 
     if (stride)
@@ -797,6 +797,14 @@ static bool transform_create_converter_elements(struct wg_transform *transform,
             return false;
         /* Let GStreamer choose a default number of threads. */
         gst_util_set_object_arg(G_OBJECT(element), "n-threads", "0");
+
+        if (transform->attrs.allow_video_scale)
+        {
+            if (!(element = create_element("videoscale", "base"))
+                    || !append_element(transform->container, element, first, last))
+                return false;
+            g_object_set(G_OBJECT(element), "add-borders", FALSE, NULL);
+        }
     }
 
     return true;
