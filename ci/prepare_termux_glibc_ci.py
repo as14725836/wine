@@ -280,7 +280,19 @@ def install(lock, cache):
                 resolved = Path(library).resolve()
                 if PREFIX not in resolved.parents:
                     raise RuntimeError(f"Toolchain resolved a library outside glibc prefix: {library}")
-            run(executable, "--version", env=env, stdout=out, stderr=subprocess.STDOUT)
+            if executable.name == "llvm-dlltool":
+                # LLVM 19 dlltool has no --version/help success mode. Exercise
+                # its actual ARM64 import-library path on the runner instead.
+                definition = cache / "dlltool-probe.def"
+                import_library = cache / "dlltool-probe.lib"
+                definition.write_text("LIBRARY dlltool-probe.dll\nEXPORTS\n    probe_symbol\n")
+                run(executable, "-m", "arm64", "-d", definition, "-l", import_library,
+                    env=env, stdout=out, stderr=subprocess.STDOUT)
+                if not import_library.read_bytes().startswith(b"!<arch>\n"):
+                    raise RuntimeError("dlltool did not produce an ARM64 import archive")
+                out.write("ARM64 dlltool import-library probe passed\n")
+            else:
+                run(executable, "--version", env=env, stdout=out, stderr=subprocess.STDOUT)
     print(f"Prepared {len(lock['packages'])} pinned packages; loader checks: {report}")
 
 
