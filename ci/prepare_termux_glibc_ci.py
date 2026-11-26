@@ -112,7 +112,10 @@ def validate_payload(archive):
                     raise ValueError(f"Unsupported package entry: {member.name}")
                 if member.issym() or member.islnk():
                     target = member.linkname
-                    resolved = Path(os.path.normpath(str(path.parent / target)))
+                    # Linux treats // as /, but normpath preserves exactly two
+                    # leading slashes. Canonicalize the root before containment
+                    # checks (the official GCC package uses //data/... links).
+                    resolved = Path(os.path.normpath("/" + str(path.parent / target).lstrip("/")))
                     if member.islnk():
                         resolved = Path(os.path.normpath("/" + target.lstrip("/")))
                     if resolved != CLASSICAL_PREFIX and CLASSICAL_PREFIX not in resolved.parents:
