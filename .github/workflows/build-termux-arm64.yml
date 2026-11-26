@@ -155,6 +155,9 @@ jobs:
           path: |
             ${{ runner.temp }}/termux-ci-diagnostics/
             ${{ runner.temp }}/termux-glibc-packages/toolchain-checks.txt
+            ${{ runner.temp }}/termux-glibc-packages/libxml2-compat-build.log
+            ${{ runner.temp }}/termux-glibc-packages/libxml2-compat.json
+            ${{ runner.temp }}/termux-glibc-packages/libxml2-compat-build/libxml2-2.13.6/config.log
             ${{ runner.temp }}/wine-termux-work/logs/
             ${{ runner.temp }}/wine-termux-work/*.json
             ${{ runner.temp }}/wine-termux-work/source-changes.patch

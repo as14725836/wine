@@ -2,7 +2,7 @@
 
 首选入口是[手动 GitHub Actions 工作流](../.github/workflows/build-termux-arm64.yml)：在仓库的 ARM64 Linux runner 上，使用官方 Termux glibc 工具链构建 Wine 的 AArch64 Unix 与 ARM64 PE 部分。[监督脚本](../ci/build_arm64_termux.py) 负责完整构建、重试、日志、心跳、状态和暂存产物，需要 Python 3.9 或更新版本。目标是原生 ARM64，不依赖 Box64 或 ARM64EC。
 
-**按“不要在本地编译，在仓库编译构建”的要求，本地构建已停止；本次构建文件只做静态检查，远端工作流尚未运行验证，因此没有完整构建成功的 Wine 二进制包，也没有 Android/Termux 真机运行结果。后文设备构建命令仅作可选参考，`doctor` 会编译和运行小型探针。**
+**按“不要在本地编译，在仓库编译构建”的要求，本地只做静态检查；远端工作流已执行，正在修复依赖准备阶段发现的问题，目前尚无完整构建成功的 Wine 二进制包，也没有 Android/Termux 真机运行结果。后文设备构建命令仅作可选参考，`doctor` 会编译和运行小型探针。**
 
 ## 仓库端构建：GitHub Actions
 
@@ -19,9 +19,9 @@
 
 待维护者将工作流定义加入默认分支后，也可在 **Actions → Termux glibc ARM64 full build → Run workflow** 中选择包含构建文件的分支手动运行。执行分支上的新工作流支持上述限定 push 和手动触发，权限为 `contents: read`，不发布 Release、不改 tag。构建基础设施取自所选分支；Wine 源码另行 checkout 到固定的 `6f1e28b249b073e36b5f68eea42f2631163b091f`，核对 SHA 后应用随附四文件补丁。分开检出避免把基础设施分支的变动误当成固定 Wine 源码；补丁只应用在该 runner 的源码检出目录。
 
-工作流使用 `ubuntu-24.04-arm`，最长 330 分钟，并发作业按分支排队，不自动取消正在运行的任务。它通过 Ubuntu apt 安装构建辅助工具，通过锁文件下载 72 个官方 Termux glibc AArch64/架构无关包（308,115,304 字节，约 308 MB），逐包核对大小、SHA256 和包元数据，然后解包到精确前缀 `/data/data/com.termux/files/usr/glibc`。这是真实的 Termux glibc 库和工具链，不是用 Ubuntu glibc 产物替代。准备器 `--install` 仅允许 GitHub-hosted Linux ARM64 环境，拒绝覆盖已有 Termux prefix；它不是给手机安装软件的脚本。锁文件固定内容，若源站移除旧版本归档会直接失败，不会静默升级或替换校验和。
+工作流使用 `ubuntu-24.04-arm`，最长 330 分钟，并发作业按分支排队，不自动取消正在运行的任务。它通过 Ubuntu apt 安装构建辅助工具，通过锁文件下载 72 个官方 Termux glibc AArch64/架构无关包（308,115,304 字节，约 308 MB），逐包核对大小、SHA256 和包元数据，然后解包到精确前缀 `/data/data/com.termux/files/usr/glibc`。Wine 使用这些官方 Termux glibc 库和工具链构建；LLVM 启动所需的旧 libxml2 ABI 另按下文补齐。准备器 `--install` 仅允许 GitHub-hosted Linux ARM64 环境，拒绝覆盖已有 Termux prefix；它不是给手机安装软件的脚本。锁文件固定内容，若源站移除旧版本归档会直接失败，不会静默升级或替换校验和。
 
-解包不执行 Debian 维护脚本。闭包中唯一的外部依赖例外是配置包 `resolv-conf`，显式用 runner 的 resolver 配置满足；不引入 Bionic 可执行文件。是否有其他依赖维护脚本生成的必要文件，仍需首次远端执行检验。准备器先验证 clang/lld 的 ELF interpreter、共享库解析均属于 glibc prefix，并运行版本检查，结果写入 `toolchain-checks.txt`；缺文件、路径错误、工具无法启动均使任务失败。整个进程树不设置 glibc `LD_LIBRARY_PATH`，避免污染 Ubuntu Python、make、git。Unix 链接通过 `LDFLAGS=-fuse-ld=lld` 选择官方 LLD，监督器再追加精确的 glibc loader 与 rpath；PE 编译器也固定为同一官方 clang。实际工具、链接器、启动文件和库搜索路径会记录在 `tool-paths.txt`。
+解包不执行 Debian 维护脚本。闭包中唯一的外部依赖例外是配置包 `resolv-conf`，显式用 runner 的 resolver 配置满足；不引入 Bionic 可执行文件。首次远端执行发现 GCC 包使用双斜杠绝对链接，准备器已修正路径规范化；第二次运行确认 LLVM 19 需要 `libxml2.so.2`，但当前官方 libxml2 2.15.4 仅提供 `.so.16`。准备器因此仅在 GitHub runner 上用 Ubuntu GCC 引导构建固定的 libxml2 2.13.6（[历史 Termux 配方](https://github.com/termux-pacman/glibc-packages/blob/16a5e6853837f8c67248bc72c6893aba8d2acb99/gpkg/libxml2/build.sh)，[上游 SHA256](https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.6.sha256sum)：`f453480307524968f7a04ec65e64f2a83a825973bcd260a2e7691be82ae70c96`）。只构建共享库目标，禁用外部可选依赖，校验 AArch64、真实 `.so.2` SONAME、LLVM 所需符号版本与仅 libc/libm 的依赖后，将兼容库并排放入前缀；保留锁定包的 `.so.16`、头文件及 pkg-config，不用改名伪装 ABI。此库用于启动 Termux 编译器，不随 Wine 归档捆绑。构建日志和源码/产物哈希一并上传；宿主 GCC 不用于编译 Wine。随后准备器验证 clang/lld 的 ELF interpreter、共享库解析均属于 glibc prefix，并运行版本检查，结果写入 `toolchain-checks.txt`；缺文件、路径错误、工具无法启动均使任务失败。整个进程树不设置 glibc `LD_LIBRARY_PATH`，避免污染 Ubuntu Python、make、git。Unix 链接通过 `LDFLAGS=-fuse-ld=lld` 选择官方 LLD，监督器再追加精确的 glibc loader 与 rpath；PE 编译器也固定为同一官方 clang。实际工具、链接器、启动文件和库搜索路径会记录在 `tool-paths.txt`。
 
 随后监督器执行 glibc/PE 探针、autogen（若需要）、configure、全量 `make`、`make install DESTDIR=...`、ELF/PE 架构校验、暂存 `wine --version` / `wineserver --version`、打包与 SHA256。它不只构建若干 DLL。配置要求 X11、FreeType、Fontconfig、GnuTLS；为避免带入未锁定的服务或媒体依赖，当前工作流关闭 Wayland、PulseAudio、GStreamer 和 FFmpeg。其他可选组件以 configure 输出为准，不承诺 Vulkan、游戏或多媒体兼容。
 
@@ -30,10 +30,10 @@
 在运行页面查看步骤日志、心跳和 Summary。正常结束时：
 
 - 成功的 `wine-termux-arm64-<run_id>-<attempt>` artifact 包含完整 Wine `.tar.gz` 及其 `.sha256`。
-- 成功或失败均尝试上传 `wine-termux-arm64-diagnostics-<run_id>-<attempt>`：锁文件、基础设施提交号、bootstrap 日志、工具链路径/加载器报告、监督日志、JSON 状态和构建指纹、源码差异、configure 日志等。若任务在更早阶段失败，相应文件可能尚未生成。
+- 成功或失败均尝试上传 `wine-termux-arm64-diagnostics-<run_id>-<attempt>`：锁文件、基础设施提交号、bootstrap 日志、libxml2 兼容库的构建日志与哈希记录、工具链路径/加载器报告、监督日志、JSON 状态和构建指纹、源码差异、configure 日志等。若任务在更早阶段失败，相应文件可能尚未生成。
 - artifacts 保留 14 天；需要长期保存时应自行下载。日志和 JSON 中的 runner 临时路径只供诊断，不是手机安装路径。
 
-**在远端真正通过前，这仍是待首次运行验证的构建路线。通过后准确表述为：“使用官方 Termux glibc 工具链在 GitHub ARM64 Linux runner 完整构建；未做 Android/Termux 真机运行验证。”** ARM64 Linux runner 无法代替 Android 内核、权限、图形和音频服务验收。
+**在远端完整构建真正通过前，这仍是验证中的构建路线。通过后准确表述为：“使用官方 Termux glibc 工具链在 GitHub ARM64 Linux runner 完整构建；未做 Android/Termux 真机运行验证。”** ARM64 Linux runner 无法代替 Android 内核、权限、图形和音频服务验收。
 
 ## 可选：在目标 Termux 设备构建
 
@@ -126,7 +126,7 @@ nohup python3 "$TOOLKIT/ci/build_arm64_termux.py" supervise \
 echo $! > "$WORK/supervisor.pid"
 ```
 
-`nohup` 只能处理终端挂断，不能保证进程躲过 Android 后台限制、系统杀进程或设备重启。可按设备设置允许 Termux 后台运行，并按需使用 Termux 的唤醒锁；设备重启后仍需重新启动监督命令。本交付提供监督能力，没有替你在远端或设备上启动常驻构建服务。
+`nohup` 只能处理终端挂断，不能保证进程躲过 Android 后台限制、系统杀进程或设备重启。可按设备设置允许 Termux 后台运行，并按需使用 Termux 的唤醒锁；设备重启后仍需重新启动监督命令。GitHub Actions 执行有限时长的远端构建任务；本交付没有启动跨工作流常驻守护服务或设备后台服务。
 
 创建 `$WORK/STOP` 可请求协作停止；也可向监督进程发送 SIGINT 或 SIGTERM：
 
@@ -182,9 +182,9 @@ tar -xzf "$ARCHIVE" -C "$DEST"
 
 ## 配置范围与验证边界
 
-脚本还保留 `--profile linux`，用于原生 AArch64 glibc Linux 的独立配置；本指南使用默认的 `termux` profile。Linux 上的检查也不能替代 Termux glibc、Android 内核和用户空间集成测试。本任务已按要求停止本地构建，交付收尾不会运行 `doctor`、configure、make、编译探针或 Wine。
+脚本还保留 `--profile linux`，用于原生 AArch64 glibc Linux 的独立配置；本指南使用默认的 `termux` profile。Linux 上的检查也不能替代 Termux glibc、Android 内核和用户空间集成测试。本任务已按要求停止本地构建；`doctor`、configure、make、编译探针与 Wine 验证只在 GitHub runner 上运行。
 
-交付内容是构建脚本、说明和源码补丁，不是完整 Wine 二进制。36 项监督器行为测试曾在停止本地编译要求之前通过；本次收尾只做 Python AST/帮助输出、Git 补丁、文件校验和与归档内容等不涉及编译的检查，没有重跑包含编译探针的测试，也没有实际 Termux 设备构建或运行结果。
+当前仓库包含构建脚本、说明和源码补丁，完整 Wine 二进制仍需远端构建通过后生成。36 项监督器行为测试曾在停止本地编译要求之前通过；此后本地只做 Python AST/帮助输出、Git 补丁、文件校验和与归档内容等不涉及编译的检查，没有重跑包含编译探针的测试，也没有实际 Termux 设备构建或运行结果。
 
 接口依据：
 
