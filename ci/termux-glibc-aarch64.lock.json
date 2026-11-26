@@ -23,7 +23,9 @@
     "libjpeg-turbo-glibc",
     "alsa-lib-glibc",
     "dbus-glibc",
-    "libglvnd-glibc"
+    "libglvnd-glibc",
+    "libdrm-glibc",
+    "llvm-glibc"
   ],
   "host_configuration_dependencies": [
     "resolv-conf"
@@ -156,6 +158,15 @@
       "depends": "glibc"
     },
     {
+      "name": "gdbm-glibc",
+      "version": "1.26",
+      "architecture": "aarch64",
+      "filename": "pool/stable/g/gdbm-glibc/gdbm-glibc_1.26_aarch64.deb",
+      "size": 175560,
+      "sha256": "ec08b39d7f0353aea7fdd19b34a92b5f1869c5a220407489c6f33ee052456a82",
+      "depends": "readline-glibc"
+    },
+    {
       "name": "glibc",
       "version": "2.44",
       "architecture": "aarch64",
@@ -210,6 +221,15 @@
       "depends": "libnghttp2-glibc, libssh2-glibc, openssl-glibc (>= 3.0.3), krb5-glibc, brotli-glibc, libpsl-glibc"
     },
     {
+      "name": "libdb-glibc",
+      "version": "18.1.40-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libd/libdb-glibc/libdb-glibc_18.1.40-1_aarch64.deb",
+      "size": 1219732,
+      "sha256": "9d7726320b86ffd38b5ec8864198313bffc3626f0d5d920a8d559e133ca9a569",
+      "depends": "gcc-libs-glibc, bash-glibc"
+    },
+    {
       "name": "libdebuginfod-glibc",
       "version": "0.196",
       "architecture": "aarch64",
@@ -217,6 +237,15 @@
       "size": 24048,
       "sha256": "5d49c0046cea3e0418f25a944dacb7d0c2bdc6493ce13e068cf7edd8ecf9826d",
       "depends": "libcurl-glibc, json-c-glibc, libelf-glibc (= 0.196)"
+    },
+    {
+      "name": "libdrm-glibc",
+      "version": "2.4.134",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libd/libdrm-glibc/libdrm-glibc_2.4.134_aarch64.deb",
+      "size": 341204,
+      "sha256": "533be512b02e7c6523ad4bef5ade405d53b4b3d364819f52522602f389e52957",
+      "depends": "libpciaccess-glibc"
     },
     {
       "name": "libedit-glibc",
@@ -399,6 +428,15 @@
       "depends": "glibc"
     },
     {
+      "name": "libpciaccess-glibc",
+      "version": "0.17",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libp/libpciaccess-glibc/libpciaccess-glibc_0.17_aarch64.deb",
+      "size": 20652,
+      "sha256": "17a2c8e98433694a5d1c915724f696d0c410b53ddcd0f7e4acbc91357ecd8dbf",
+      "depends": "zlib-glibc"
+    },
+    {
       "name": "libpng-glibc",
       "version": "1.6.58",
       "architecture": "aarch64",
@@ -496,6 +534,15 @@
       "size": 10252,
       "sha256": "6dc0ea80780ab017ce1ec52c1c6d827a544f8d74746c1fc2165f67e2600f73bd",
       "depends": "libxfixes-glibc"
+    },
+    {
+      "name": "libxcrypt-glibc",
+      "version": "4.5.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxcrypt-glibc/libxcrypt-glibc_4.5.2_aarch64.deb",
+      "size": 90244,
+      "sha256": "77264e53d769d043ad5744fb41d89c428d96c5f006eb7bc84e4f69f87078e04b",
+      "depends": "glibc"
     },
     {
       "name": "libxcursor-glibc",
@@ -597,6 +644,15 @@
       "depends": "libllvm-glibc, gcc-libs-glibc, zlib-glibc, zstd-glibc"
     },
     {
+      "name": "llvm-glibc",
+      "version": "19.1.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/l/llvm-glibc/llvm-glibc_19.1.3_aarch64.deb",
+      "size": 35417176,
+      "sha256": "d6e014382da2758045c81d763fd7ca33a2e8425674de21daa6d248d4ed69a19b",
+      "depends": "libllvm-glibc, perl-glibc"
+    },
+    {
       "name": "ncurses-glibc",
       "version": "6.6.20260725",
       "architecture": "aarch64",
@@ -622,6 +678,15 @@
       "size": 4116284,
       "sha256": "c30b40ad7a82316f936286d9a98c3d3e583ee0773d4c951388912a78f84b4d11",
       "depends": "libffi-glibc, libtasn1-glibc"
+    },
+    {
+      "name": "perl-glibc",
+      "version": "5.42.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/p/perl-glibc/perl-glibc_5.42.2_aarch64.deb",
+      "size": 15873152,
+      "sha256": "c330fa9361db7923b4c7f48ba2392b20344cbd499d571ad6f62058546030c260",
+      "depends": "gdbm-glibc, libdb-glibc, glibc, libxcrypt-glibc"
     },
     {
       "name": "readline-glibc",

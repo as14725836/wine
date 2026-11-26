@@ -90,7 +90,7 @@ jobs:
           export PATH="$GLIBC_PREFIX/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
           {
             uname -a
-            for tool in clang clang++ ld.lld ld make perl python3 pkg-config readelf; do
+            for tool in clang clang++ ld.lld llvm-dlltool ld make perl python3 pkg-config readelf; do
               command -v "$tool"
             done
             "$CC" --print-search-dirs

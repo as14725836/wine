@@ -245,7 +245,11 @@ def install(lock, cache):
     run("sudo", "install", "-d", "-m", "1777", CLASSICAL_PREFIX / "tmp")
     run("sudo", "install", "-d", "-m", "755", CLASSICAL_PREFIX / "etc")
     run("sudo", "cp", "-L", "/etc/resolv.conf", CLASSICAL_PREFIX / "etc/resolv.conf")
-    for name in ("bin/clang", "bin/clang++", "bin/ld.lld", "lib/ld-linux-aarch64.so.1", "lib/libc.so.6"):
+    for name in ("bin/clang", "bin/clang++", "bin/ld.lld", "bin/llvm-dlltool",
+                 "lib/ld-linux-aarch64.so.1", "lib/libc.so.6", "include/xf86drm.h",
+                 "include/libdrm/amdgpu.h", "include/libdrm/amdgpu_drm.h",
+                 "lib/libdrm.so", "lib/libdrm_amdgpu.so",
+                 "lib/pkgconfig/libdrm.pc", "lib/pkgconfig/libdrm_amdgpu.pc"):
         if not (PREFIX / name).is_file():
             raise RuntimeError(f"Required extracted file missing: {name}")
     build_xml_compat(cache)
@@ -258,7 +262,7 @@ def install(lock, cache):
     env["LC_ALL"] = "C"
     env["LD_BIND_NOW"] = "1"
     with report.open("w") as out:
-        for executable in (PREFIX / "bin/clang", PREFIX / "bin/ld.lld"):
+        for executable in (PREFIX / "bin/clang", PREFIX / "bin/ld.lld", PREFIX / "bin/llvm-dlltool"):
             headers = subprocess.check_output(["readelf", "-l", str(executable)], text=True, env=env)
             out.write(headers)
             out.flush()
