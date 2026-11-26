@@ -347,8 +347,10 @@ class Supervisor:
                 self.run(pe_cmd + ["-c", str(pe), "-o", str(obj)],
                          phase=f"probe-coff-{target}", timeout=60)
                 object_info = verify_coff_object(obj, target)
+                # LLVM-MinGW selects the GNU-style linker frontend, unlike the
+                # native mode's aarch64-windows (MSVC) probe below.
                 self.run(pe_cmd + ["-fuse-ld=lld", "-nostdlib", str(obj),
-                                   "-Wl,-entry:mainCRTStartup", "-Wl,-subsystem:console",
+                                   "-Wl,--entry=mainCRTStartup", "-Wl,--subsystem=console",
                                    "-o", str(output)], phase=f"probe-pe-{target}", timeout=60)
                 pe_reports[target] = {"object": object_info, "image": verify_pe(output, target)}
                 evidence = self.run([tools["llvm-readobj"], "--file-headers", "--coff-load-config", output],
