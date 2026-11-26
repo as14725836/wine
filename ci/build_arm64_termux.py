@@ -328,6 +328,9 @@ class Supervisor:
         pe = probe / "pe.c"
         pe.write_text("void mainCRTStartup(void) {}\n")
         if self.architecture == "arm64ec":
+            # Exercise the driver's CRT and runtime libraries too. ARM64EC entry
+            # thunks need dispatch symbols even when the source function is empty.
+            pe.write_text("int main(void) { return 0; }\n")
             pe_reports = {}
             compiler_versions = {}
             reports = self.work / "pe-reports"
@@ -349,8 +352,7 @@ class Supervisor:
                 object_info = verify_coff_object(obj, target)
                 # LLVM-MinGW selects the GNU-style linker frontend, unlike the
                 # native mode's aarch64-windows (MSVC) probe below.
-                self.run(pe_cmd + ["-fuse-ld=lld", "-nostdlib", str(obj),
-                                   "-Wl,--entry=mainCRTStartup", "-Wl,--subsystem=console",
+                self.run(pe_cmd + ["-fuse-ld=lld", str(obj), "-Wl,--subsystem=console",
                                    "-o", str(output)], phase=f"probe-pe-{target}", timeout=60)
                 pe_reports[target] = {"object": object_info, "image": verify_pe(output, target)}
                 evidence = self.run([tools["llvm-readobj"], "--file-headers", "--coff-load-config", output],
