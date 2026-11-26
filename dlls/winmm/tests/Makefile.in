@@ -12,4 +12,5 @@ SOURCES = \
 	mmio.c \
 	rsrc.rc \
 	timer.c \
-	wave.c
+	wave.c \
+	winmm.c

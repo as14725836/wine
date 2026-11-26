@@ -190,6 +190,21 @@ MMRESULT WINMM_CheckCallback(DWORD_PTR dwCallback, DWORD fdwOpen, BOOL mixer)
 }
 
 /**************************************************************************
+ *              WOW32ResolveMultiMediaHandle (WINMM.@)
+ */
+BOOL WINAPI WOW32ResolveMultiMediaHandle(UINT type, UINT direction, WORD handle16,
+                                       WORD *result16, HANDLE handle32, HANDLE *result32)
+{
+    TRACE("%u, %u, %#x, %p, %p, %p\n", type, direction, handle16, result16, handle32, result32);
+
+    /* Native winmm only converts handles inside an NTVDM WOW process. Wine's
+     * Win16 multimedia implementation uses Win32 handles directly and has no
+     * NTVDM multimedia handle table. Preserve both outputs on this path.
+     */
+    return FALSE;
+}
+
+/**************************************************************************
  * 				auxGetNumDevs		[WINMM.@]
  */
 UINT WINAPI auxGetNumDevs(void)
