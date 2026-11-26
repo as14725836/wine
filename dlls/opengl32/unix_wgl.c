@@ -2208,8 +2208,9 @@ void pop_default_fbo( TEB *teb )
 
 void resolve_default_fbo( TEB *teb )
 {
-    GLint curr_draw_buffer, curr_read_buffer, curr_read_fbo, curr_draw_fbo;
+    GLint curr_read_buffer, curr_read_fbo, curr_draw_fbo, count = 0;
     const struct opengl_funcs *funcs = teb->glTable;
+    GLenum draw_buffers[MAX_DRAW_BUFFERS];
     struct opengl_drawable *drawable;
     GLint color_encoding = 0;
     GLboolean fb_srgb;
@@ -2224,7 +2225,6 @@ void resolve_default_fbo( TEB *teb )
     funcs->p_glGetIntegerv( GL_READ_FRAMEBUFFER_BINDING, &curr_read_fbo );
     funcs->p_glGetIntegerv( GL_DRAW_FRAMEBUFFER_BINDING, &curr_draw_fbo );
     funcs->p_glGetIntegerv( GL_READ_BUFFER, (GLint *)&curr_read_buffer );
-    funcs->p_glGetIntegerv( GL_DRAW_BUFFER, (GLint *)&curr_draw_buffer );
 
     if (curr_read_fbo != drawable->read_fbo)
     {
@@ -2235,6 +2235,25 @@ void resolve_default_fbo( TEB *teb )
     {
         ERR( "drawable %p, Unexpected read buffer %#x on default FBO.\n", drawable, curr_read_buffer );
         return;
+    }
+
+    /* glDrawBuffer() resets all draw-buffer slots. Only the resolve destination
+     * needs its selections restored if it was also the current draw FBO. */
+    if (curr_draw_fbo == drawable->read_fbo)
+    {
+        if (!funcs->p_glDrawBuffers)
+        {
+            ERR( "glDrawBuffers not available.\n" );
+            return;
+        }
+        funcs->p_glGetIntegerv( GL_MAX_DRAW_BUFFERS, &count );
+        if (count <= 0 || count > MAX_DRAW_BUFFERS)
+        {
+            ERR( "Unexpected draw-buffer count %d.\n", count );
+            return;
+        }
+        for (GLint i = 0; i < count; ++i)
+            funcs->p_glGetIntegerv( GL_DRAW_BUFFER0 + i, (GLint *)&draw_buffers[i] );
     }
 
     NtUserGetClientRect( drawable->client->hwnd, &rect, NtUserGetDpiForWindow( drawable->client->hwnd ) );
@@ -2259,7 +2278,7 @@ void resolve_default_fbo( TEB *teb )
     funcs->p_glBindFramebuffer( GL_READ_FRAMEBUFFER, curr_read_fbo );
     funcs->p_glBindFramebuffer( GL_DRAW_FRAMEBUFFER, curr_draw_fbo );
     funcs->p_glReadBuffer( curr_read_buffer );
-    funcs->p_glDrawBuffer( curr_draw_buffer );
+    if (count) funcs->p_glDrawBuffers( count, draw_buffers );
 }
 
 static GLenum *set_default_fbo_draw_buffers( struct context *ctx, struct opengl_drawable *draw,

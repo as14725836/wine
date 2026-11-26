@@ -99,6 +99,12 @@ static void (WINAPI *pglDebugMessageInsertARB)(GLenum, GLenum, GLuint, GLenum, G
 /* GL_ARB_framebuffer_object */
 static void (WINAPI *pglBindFramebuffer)(GLenum target, GLuint framebuffer);
 static GLenum (WINAPI *pglCheckFramebufferStatus)(GLenum target);
+static void (WINAPI *pglDeleteFramebuffers)(GLsizei count, const GLuint *framebuffers);
+static void (WINAPI *pglFramebufferTexture2D)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+static void (WINAPI *pglGenFramebuffers)(GLsizei count, GLuint *framebuffers);
+
+/* GL_ARB_draw_buffers */
+static void (WINAPI *pglDrawBuffers)(GLsizei count, const GLenum *buffers);
 
 static PFN_glBindBuffer pglBindBuffer;
 static PFN_glBufferData pglBufferData;
@@ -185,6 +191,12 @@ static void init_functions(void)
     /* GL_ARB_framebuffer_object */
     GET_PROC(glBindFramebuffer)
     GET_PROC(glCheckFramebufferStatus)
+    GET_PROC(glDeleteFramebuffers)
+    GET_PROC(glFramebufferTexture2D)
+    GET_PROC(glGenFramebuffers)
+
+    /* GL_ARB_draw_buffers */
+    GET_PROC(glDrawBuffers)
 
     GET_PROC(glBindBuffer)
     GET_PROC(glBufferData)
@@ -2530,6 +2542,172 @@ static void test_minimized(void)
     DestroyWindow(window);
 }
 
+static void test_multisample_draw_buffers(HDC old_dc)
+{
+    static const int attribs[] =
+    {
+        WGL_DRAW_TO_WINDOW_ARB, TRUE,
+        WGL_SUPPORT_OPENGL_ARB, TRUE,
+        WGL_DOUBLE_BUFFER_ARB, TRUE,
+        WGL_PIXEL_TYPE_ARB, WGL_TYPE_RGBA_ARB,
+        WGL_COLOR_BITS_ARB, 24,
+        WGL_SAMPLE_BUFFERS_ARB, 1,
+        WGL_SAMPLES_ARB, 2,
+        0
+    };
+    static const GLenum draw_buffers[][2] =
+    {
+        {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1},
+        {GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT0},
+        {GL_NONE, GL_COLOR_ATTACHMENT1},
+        {GL_NONE, GL_NONE}, /* Default DRAW framebuffer. */
+    };
+    HGLRC old_ctx = wglGetCurrentContext(), ctx;
+    GLint sample_buffers, samples, max_buffers, max_attachments, default_buffers[2], value;
+    GLuint fbo = 0, textures[2] = {0}, draw_fbo;
+    PIXELFORMATDESCRIPTOR pfd;
+    UINT format_count = 0;
+    const char *extensions;
+    int pixel_format;
+    unsigned int i, j;
+    GLenum status;
+    BYTE pixel[4];
+    HWND window;
+    BOOL ret;
+    HDC dc;
+
+    if (!pwglChoosePixelFormatARB || !pwglGetExtensionsStringARB
+            || !(extensions = pwglGetExtensionsStringARB(old_dc))
+            || !gl_extension_supported(extensions, "WGL_ARB_pixel_format")
+            || !gl_extension_supported(extensions, "WGL_ARB_multisample"))
+    {
+        win_skip("WGL_ARB_pixel_format or WGL_ARB_multisample is not supported.\n");
+        return;
+    }
+
+    window = CreateWindowA("static", "opengl32_test", WS_POPUP, 0, 0, 64, 64, 0, 0, 0, 0);
+    ok(!!window, "Failed to create window, last error %#lx.\n", GetLastError());
+    if (!window) return;
+    dc = GetDC(window);
+    ok(!!dc, "Failed to get DC.\n");
+    if (!dc)
+    {
+        DestroyWindow(window);
+        return;
+    }
+
+    ret = pwglChoosePixelFormatARB(dc, attribs, NULL, 1, &pixel_format, &format_count);
+    ok(ret, "Failed to choose pixel format, last error %#lx.\n", GetLastError());
+    if (!ret || !format_count)
+    {
+        win_skip("No multisampled double-buffered pixel format found.\n");
+        goto cleanup_window;
+    }
+    ret = DescribePixelFormat(dc, pixel_format, sizeof(pfd), &pfd);
+    ok(ret, "Failed to describe pixel format, last error %#lx.\n", GetLastError());
+    if (!ret) goto cleanup_window;
+    ret = SetPixelFormat(dc, pixel_format, &pfd);
+    ok(ret, "Failed to set pixel format, last error %#lx.\n", GetLastError());
+    if (!ret) goto cleanup_window;
+    ctx = wglCreateContext(dc);
+    ok(!!ctx, "Failed to create GL context, last error %#lx.\n", GetLastError());
+    if (!ctx) goto cleanup_window;
+    ret = wglMakeCurrent(dc, ctx);
+    ok(ret, "Failed to make context current, last error %#lx.\n", GetLastError());
+    if (!ret) goto cleanup_context;
+
+    extensions = (const char *)glGetString(GL_EXTENSIONS);
+    if (!extensions || !gl_extension_supported(extensions, "GL_ARB_framebuffer_object")
+            || !gl_extension_supported(extensions, "GL_ARB_draw_buffers")
+            || !pglBindFramebuffer || !pglCheckFramebufferStatus || !pglDeleteFramebuffers
+            || !pglFramebufferTexture2D || !pglGenFramebuffers || !pglDrawBuffers)
+    {
+        win_skip("Framebuffer objects or multiple draw buffers are not supported.\n");
+        goto cleanup_context;
+    }
+    glGetIntegerv(GL_SAMPLE_BUFFERS, &sample_buffers);
+    glGetIntegerv(GL_SAMPLES, &samples);
+    glGetIntegerv(GL_MAX_DRAW_BUFFERS, &max_buffers);
+    glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &max_attachments);
+    ok_ret(GL_NO_ERROR, glGetError());
+    if (!sample_buffers || samples < 2 || max_buffers < 2 || max_attachments < 2)
+    {
+        win_skip("Got %d sample buffers, %d samples, %d draw buffers and %d color attachments.\n",
+                sample_buffers, samples, max_buffers, max_attachments);
+        goto cleanup_context;
+    }
+
+    ShowWindow(window, SW_SHOW);
+    flush_events();
+    glReadBuffer(GL_BACK);
+    glClearColor(0.25f, 0.5f, 0.75f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    pglGenFramebuffers(1, &fbo);
+    pglBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+    glGenTextures(ARRAY_SIZE(textures), textures);
+    for (i = 0; i < ARRAY_SIZE(textures); ++i)
+    {
+        glBindTexture(GL_TEXTURE_2D, textures[i]);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+        pglFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, textures[i], 0);
+    }
+    status = pglCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER);
+    ok(status == GL_FRAMEBUFFER_COMPLETE, "Expected %#x, got %#x.\n", GL_FRAMEBUFFER_COMPLETE, status);
+    ok_ret(GL_NO_ERROR, glGetError());
+    if (status != GL_FRAMEBUFFER_COMPLETE) goto cleanup_objects;
+
+    for (i = 0; i < ARRAY_SIZE(draw_buffers); ++i)
+    {
+        winetest_push_context("Draw buffers %u", i);
+        draw_fbo = i == ARRAY_SIZE(draw_buffers) - 1 ? 0 : fbo;
+        pglBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fbo);
+        if (draw_fbo)
+            pglDrawBuffers(ARRAY_SIZE(draw_buffers[i]), draw_buffers[i]);
+        else
+        {
+            glDrawBuffer(GL_NONE);
+            /* Check reported state preservation only; default GL_NONE mapping is a separate issue. */
+            for (j = 0; j < ARRAY_SIZE(default_buffers); ++j)
+                glGetIntegerv(GL_DRAW_BUFFER0 + j, &default_buffers[j]);
+        }
+        ok_ret(GL_NO_ERROR, glGetError());
+
+        /* Resolving the multisampled default READ framebuffer must preserve DRAW state. */
+        glReadPixels(0, 0, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+        ok_ret(GL_NO_ERROR, glGetError());
+        glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &value);
+        ok(value == draw_fbo, "Expected DRAW framebuffer %#x, got %#x.\n", draw_fbo, value);
+        glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &value);
+        ok(!value, "Expected default READ framebuffer, got %#x.\n", value);
+        glGetIntegerv(GL_READ_BUFFER, &value);
+        ok(value == GL_BACK, "Expected READ buffer GL_BACK, got %#x.\n", value);
+        for (j = 0; j < ARRAY_SIZE(draw_buffers[i]); ++j)
+        {
+            GLint expected = draw_fbo ? draw_buffers[i][j] : default_buffers[j];
+
+            glGetIntegerv(GL_DRAW_BUFFER0 + j, &value);
+            ok(value == expected, "Expected DRAW buffer %u %#x, got %#x.\n", j, expected, value);
+        }
+        ok_ret(GL_NO_ERROR, glGetError());
+        winetest_pop_context();
+    }
+
+cleanup_objects:
+    glDeleteTextures(ARRAY_SIZE(textures), textures);
+    pglDeleteFramebuffers(1, &fbo);
+cleanup_context:
+    ret = wglMakeCurrent(NULL, NULL);
+    ok(ret, "Failed to clear current context, last error %#lx.\n", GetLastError());
+    ret = wglDeleteContext(ctx);
+    ok(ret, "Failed to delete GL context, last error %#lx.\n", GetLastError());
+    ret = wglMakeCurrent(old_dc, old_ctx);
+    ok(ret, "Failed to restore context, last error %#lx.\n", GetLastError());
+cleanup_window:
+    ReleaseDC(window, dc);
+    DestroyWindow(window);
+}
+
 static void test_framebuffer(void)
 {
     static const PIXELFORMATDESCRIPTOR pf_desc =
@@ -2586,6 +2764,8 @@ static void test_framebuffer(void)
 
     status = pglCheckFramebufferStatus(GL_FRAMEBUFFER);
     ok(status == GL_FRAMEBUFFER_COMPLETE, "Expected %#x, got %#x.\n", GL_FRAMEBUFFER_COMPLETE, status);
+
+    test_multisample_draw_buffers(dc);
 
     ret = wglMakeCurrent(NULL, NULL);
     ok(ret, "Failed to clear current context, last error %#lx.\n", GetLastError());
