@@ -379,7 +379,8 @@ static void release_test_context_(unsigned int line, struct d3d9_test_context *c
 {
     ULONG refcount;
 
-    IDirect3DSurface9_Release(context->backbuffer);
+    if (context->backbuffer)
+        IDirect3DSurface9_Release(context->backbuffer);
     refcount = IDirect3DDevice9_Release(context->device);
     ok(!refcount, "Device has %lu references left.\n", refcount);
     refcount = IDirect3D9_Release(context->d3d);
@@ -429,6 +430,7 @@ static HRESULT reset_device(struct d3d9_test_context *context)
     HRESULT hr;
 
     IDirect3DSurface9_Release(context->backbuffer);
+    context->backbuffer = NULL;
 
     present_parameters.BackBufferWidth = 640;
     present_parameters.BackBufferHeight = 480;
@@ -441,7 +443,7 @@ static HRESULT reset_device(struct d3d9_test_context *context)
     hr = IDirect3DDevice9_Reset(context->device, &present_parameters);
 
     if (SUCCEEDED(hr))
-        IDirect3DDevice9_GetRenderTarget(context->device, 0, &context->backbuffer);
+        hr = IDirect3DDevice9_GetRenderTarget(context->device, 0, &context->backbuffer);
 
     return hr;
 }
@@ -27464,6 +27466,129 @@ static void test_managed_reset(void)
     release_test_context(&context);
 }
 
+static void test_shader_reset(void)
+{
+    IDirect3DVertexShader9 *vs = NULL;
+    IDirect3DPixelShader9 *ps = NULL;
+    struct d3d9_test_context context;
+    IDirect3DDevice9 *device;
+    unsigned int color, i;
+    D3DCAPS9 caps;
+    HRESULT hr;
+
+    static const DWORD vs_code[] =
+    {
+        0xfffe0200,                                         /* vs_2_0               */
+        0x0200001f, 0x80000000, 0x900f0000,                 /* dcl_position v0      */
+        0x02000001, 0xc00f0000, 0x90e40000,                 /* mov oPos, v0         */
+        0x0000ffff                                          /* end                  */
+    };
+    static const DWORD ps_code[] =
+    {
+        0xffff0200,                                         /* ps_2_0               */
+        0x02000001, 0x800f0800, 0xa0e40000,                 /* mov oC0, c0          */
+        0x0000ffff                                          /* end                  */
+    };
+    static const struct vec3 quad[] =
+    {
+        {-1.0f, -1.0f, 0.5f},
+        {-1.0f,  1.0f, 0.5f},
+        { 1.0f, -1.0f, 0.5f},
+        { 1.0f,  1.0f, 0.5f},
+    };
+    static const struct
+    {
+        float constant[4];
+        unsigned int color;
+    }
+    tests[] =
+    {
+        {{1.0f, 0.0f, 0.0f, 1.0f}, 0x00ff0000},
+        {{0.0f, 1.0f, 0.0f, 1.0f}, 0x0000ff00},
+        {{0.0f, 0.0f, 1.0f, 1.0f}, 0x000000ff},
+    };
+    static const D3DVIEWPORT9 viewport = {0, 0, 640, 480, 0.0f, 1.0f};
+
+    if (!init_test_context(&context))
+        return;
+    device = context.device;
+
+    hr = IDirect3DDevice9_GetDeviceCaps(device, &caps);
+    ok(hr == S_OK, "Failed to get device caps, hr %#lx.\n", hr);
+    if (FAILED(hr))
+        goto done;
+    if (caps.VertexShaderVersion < D3DVS_VERSION(2, 0) || caps.PixelShaderVersion < D3DPS_VERSION(2, 0))
+    {
+        skip("No shader model 2 support, skipping tests.\n");
+        goto done;
+    }
+
+    hr = IDirect3DDevice9_CreateVertexShader(device, vs_code, &vs);
+    ok(hr == S_OK, "Failed to create vertex shader, hr %#lx.\n", hr);
+    if (FAILED(hr))
+        goto done;
+    hr = IDirect3DDevice9_CreatePixelShader(device, ps_code, &ps);
+    ok(hr == S_OK, "Failed to create pixel shader, hr %#lx.\n", hr);
+    if (FAILED(hr))
+        goto done;
+
+    /* Draw before Reset to instantiate the shader backends, then reuse the
+     * same shader objects with different constants after each Reset. */
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        winetest_push_context("Draw %u", i);
+
+        if (i)
+        {
+            hr = reset_device(&context);
+            ok(hr == S_OK, "Failed to reset device, hr %#lx.\n", hr);
+            if (FAILED(hr))
+            {
+                winetest_pop_context();
+                break;
+            }
+        }
+
+        hr = IDirect3DDevice9_SetViewport(device, &viewport);
+        ok(hr == S_OK, "Failed to set viewport, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetRenderState(device, D3DRS_ZENABLE, FALSE);
+        ok(hr == S_OK, "Failed to disable depth testing, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetRenderState(device, D3DRS_CULLMODE, D3DCULL_NONE);
+        ok(hr == S_OK, "Failed to disable culling, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetFVF(device, D3DFVF_XYZ);
+        ok(hr == S_OK, "Failed to set FVF, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetVertexShader(device, vs);
+        ok(hr == S_OK, "Failed to set vertex shader, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetPixelShader(device, ps);
+        ok(hr == S_OK, "Failed to set pixel shader, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_SetPixelShaderConstantF(device, 0, tests[i].constant, 1);
+        ok(hr == S_OK, "Failed to set pixel shader constant, hr %#lx.\n", hr);
+
+        hr = IDirect3DDevice9_Clear(device, 0, NULL, D3DCLEAR_TARGET, 0xff000000, 1.0f, 0);
+        ok(hr == S_OK, "Failed to clear render target, hr %#lx.\n", hr);
+        hr = IDirect3DDevice9_BeginScene(device);
+        ok(hr == S_OK, "Failed to begin scene, hr %#lx.\n", hr);
+        if (SUCCEEDED(hr))
+        {
+            hr = IDirect3DDevice9_DrawPrimitiveUP(device, D3DPT_TRIANGLESTRIP, 2, quad, sizeof(*quad));
+            ok(hr == S_OK, "Failed to draw, hr %#lx.\n", hr);
+            hr = IDirect3DDevice9_EndScene(device);
+            ok(hr == S_OK, "Failed to end scene, hr %#lx.\n", hr);
+        }
+
+        color = getPixelColor(device, 320, 240);
+        ok(color_match(color, tests[i].color, 1), "Got color 0x%08x, expected 0x%08x.\n", color, tests[i].color);
+        winetest_pop_context();
+    }
+
+done:
+    if (ps)
+        IDirect3DPixelShader9_Release(ps);
+    if (vs)
+        IDirect3DVertexShader9_Release(vs);
+    release_test_context(&context);
+}
+
 static void test_managed_generate_mipmap(void)
 {
     struct d3d9_test_context context;
@@ -29167,6 +29292,7 @@ START_TEST(visual)
     test_dynamic_map_synchronization();
     test_filling_convention();
     test_managed_reset();
+    test_shader_reset();
     test_managed_generate_mipmap();
     test_mipmap_upload();
     test_default_diffuse();
