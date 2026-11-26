@@ -431,7 +431,7 @@ jobs:
           # This does not run the test suites; make test/check is deliberately separate.
           make -j"$(nproc)"
           for arch in i386 x86_64; do
-            for module in dinput dwrite kernel32 mf mfplat mfreadwrite mfsrcsnk ntdll opengl32 quartz user32; do
+            for module in d3d8 d3d9 d3d11 dinput dwrite kernel32 mf mfplat mfreadwrite mfsrcsnk ntdll opengl32 quartz user32; do
               test -s "dlls/${module}/tests/${arch}-windows/${module}_test.exe"
             done
           done
@@ -443,6 +443,9 @@ jobs:
           retention-days: 30
           if-no-files-found: error
           path: |
+            build-wow64/dlls/d3d8/tests/*-windows/d3d8_test.exe
+            build-wow64/dlls/d3d9/tests/*-windows/d3d9_test.exe
+            build-wow64/dlls/d3d11/tests/*-windows/d3d11_test.exe
             build-wow64/dlls/dinput/tests/*-windows/dinput_test.exe
             build-wow64/dlls/dwrite/tests/*-windows/dwrite_test.exe
             build-wow64/dlls/kernel32/tests/*-windows/kernel32_test.exe
