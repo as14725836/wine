@@ -540,6 +540,19 @@ static const char* DRIVER_getCallback(DWORD uFlags)
 }
 
 /**************************************************************************
+ *                    mmDrvInstall                  [WINMM.@]
+ */
+UINT WINAPI mmDrvInstall(HDRVR driver, const WCHAR *name,
+                        DWORD (WINAPI *message)(DWORD, DWORD, DWORD_PTR, DWORD_PTR, DWORD_PTR), UINT flags)
+{
+    FIXME("%p, %s, %p, %#x: dynamic multimedia driver installation is not supported\n",
+          driver, debugstr_w(name), message, flags);
+
+    /* This API returns a Boolean-style UINT, not an MMSYSERR_* error code. */
+    return 0;
+}
+
+/**************************************************************************
  *                    NotifyCallbackData            [WINMM.@]
  *
  * Undocumented 16-bit WOW entry point. Windows 16-bit mmsystem.dll calls

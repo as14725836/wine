@@ -21,6 +21,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <math.h>
 
 #include "wine/test.h"
@@ -61,6 +62,82 @@ static void test_timeGetDevCaps(void)
     if (rc == TIMERR_NOERROR)
         trace("wPeriodMin = %u, wPeriodMax = %u\n",
               tc.wPeriodMin, tc.wPeriodMax);
+}
+
+static void test_time_exports(void)
+{
+    static const char * const names[] =
+    {
+        "timeBeginPeriod", "timeEndPeriod", "timeGetDevCaps", "timeGetSystemTime", "timeGetTime"
+    };
+    HMODULE module = GetModuleHandleA("winmm.dll");
+    unsigned int i;
+
+    ok(module != NULL, "winmm.dll is not loaded\n");
+    if (!module) return;
+    for (i = 0; i < ARRAY_SIZE(names); ++i)
+        ok(GetProcAddress(module, names[i]) != NULL, "%s is not exported\n", names[i]);
+}
+
+static void test_timeGetSystemTime(void)
+{
+    static const UINT types[] = {0, TIME_MS, TIME_SAMPLES};
+    MMTIME time, unchanged;
+    DWORD before, after;
+    MMRESULT rc;
+    unsigned int i;
+    UINT size;
+
+    for (i = 0; i < ARRAY_SIZE(types); ++i)
+    {
+        memset(&time, 0xcc, sizeof(time));
+        time.wType = types[i];
+        before = timeGetTime();
+        rc = timeGetSystemTime(&time, sizeof(time));
+        after = timeGetTime();
+        ok(rc == TIMERR_NOERROR, "timeGetSystemTime() returned %s\n", mmsys_error(rc));
+        ok(time.wType == TIME_MS, "type %u: got wType %#x\n", types[i], time.wType);
+        ok((DWORD)(time.u.ms - before) <= (DWORD)(after - before),
+           "type %u: time %lu is outside [%lu, %lu]\n", types[i], time.u.ms, before, after);
+    }
+
+    memset(&unchanged, 0xcc, sizeof(unchanged));
+    for (size = 0; size < sizeof(time); ++size)
+    {
+        memset(&time, 0xcc, sizeof(time));
+        timeGetSystemTime(&time, size);
+        ok(!memcmp(&time, &unchanged, sizeof(time)), "size %u: output was modified\n", size);
+    }
+}
+
+static void test_timePeriod(void)
+{
+    UINT periods[3];
+    MMRESULT rc, expected;
+    unsigned int i;
+
+    if (!tc.wPeriodMin || tc.wPeriodMin > tc.wPeriodMax) return;
+    periods[0] = tc.wPeriodMin;
+    periods[1] = tc.wPeriodMax;
+    periods[2] = tc.wPeriodMin - 1;
+
+    for (i = 0; i < ARRAY_SIZE(periods); ++i)
+    {
+        expected = i < 2 ? TIMERR_NOERROR : TIMERR_NOCANDO;
+        rc = timeBeginPeriod(periods[i]);
+        ok(rc == expected, "timeBeginPeriod(%u) returned %s, expected %s\n",
+           periods[i], mmsys_error(rc), mmsys_error(expected));
+        if (rc == TIMERR_NOERROR)
+        {
+            rc = timeEndPeriod(periods[i]);
+            ok(rc == TIMERR_NOERROR, "timeEndPeriod(%u) returned %s\n", periods[i], mmsys_error(rc));
+        }
+        if (expected == TIMERR_NOCANDO)
+        {
+            rc = timeEndPeriod(periods[i]);
+            ok(rc == TIMERR_NOCANDO, "timeEndPeriod(%u) returned %s\n", periods[i], mmsys_error(rc));
+        }
+    }
 }
 
 #define NUM_SAMPLES    100
@@ -249,7 +326,10 @@ static void test_timer_lifetime(void)
 
 START_TEST(timer)
 {
+    test_time_exports();
     test_timeGetDevCaps();
+    test_timeGetSystemTime();
+    test_timePeriod();
 
     if (tc.wPeriodMin <= 1) {
         test_timer(1, 0);

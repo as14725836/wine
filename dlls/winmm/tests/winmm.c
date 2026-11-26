@@ -81,6 +81,75 @@ static void test_WOW32ResolveMultiMediaHandle(void)
     FreeLibrary(module);
 }
 
+static void test_wow_message_exports(void)
+{
+#ifdef __i386__
+    static const struct
+    {
+        const char *name;
+        DWORD result;
+    }
+    tests[] =
+    {
+        {"aux32Message", MMSYSERR_NOTSUPPORTED},
+        {"joy32Message", TIMERR_NOCANDO},
+        {"mci32Message", 1},
+        {"mid32Message", MMSYSERR_NOTSUPPORTED},
+        {"mod32Message", MMSYSERR_NOTSUPPORTED},
+        {"mxd32Message", MMSYSERR_NOTSUPPORTED},
+        {"tid32Message", TIMERR_NOCANDO},
+        {"wid32Message", MMSYSERR_NOTSUPPORTED},
+        {"wod32Message", MMSYSERR_NOTSUPPORTED},
+    };
+    static const DWORD args[][5] =
+    {
+        {0, 0, 0, 0, 0},
+        {1, 0, 0, 0, 0},
+        {11, 0, 0, 0, 0},
+        {0xdeadbeef, 0x12345678, 0x8000, 0xffff, 0xdeadbeef},
+        {~0u, ~0u, ~0u, ~0u, ~0u},
+    };
+    HMODULE module = GetModuleHandleA("winmm.dll");
+    DWORD (WINAPI *message)(DWORD, DWORD, DWORD, DWORD, DWORD);
+    unsigned int i, j;
+    DWORD ret;
+
+    /* Ordinary Win32 callers must take the non-WOW path, regardless of
+     * the opcode, handles or pointers encoded in the five arguments.
+     */
+    for (i = 0; i < ARRAY_SIZE(tests); ++i)
+    {
+        message = (void *)GetProcAddress(module, tests[i].name);
+        ok(!!message, "%s export is missing\n", tests[i].name);
+        if (!message) continue;
+        for (j = 0; j < ARRAY_SIZE(args); ++j)
+        {
+            ret = message(args[j][0], args[j][1], args[j][2], args[j][3], args[j][4]);
+            ok(ret == tests[i].result, "%s case %u returned %lu, expected %lu\n",
+               tests[i].name, j, ret, tests[i].result);
+        }
+    }
+#else
+    win_skip("WOW message entry points are only tested on i386\n");
+#endif
+}
+
+static void test_mmDrvInstall(void)
+{
+    typedef DWORD (WINAPI *driver_message_proc)(DWORD, DWORD, DWORD_PTR, DWORD_PTR, DWORD_PTR);
+    UINT (WINAPI *install)(HDRVR, const WCHAR *, driver_message_proc, UINT);
+    HMODULE module = GetModuleHandleA("winmm.dll");
+    UINT ret;
+
+    install = (void *)GetProcAddress(module, "mmDrvInstall");
+    ok(!!install, "mmDrvInstall export is missing\n");
+    if (!install) return;
+
+    /* Category 15 is invalid. No driver, name or callback is needed. */
+    ret = install(NULL, NULL, NULL, ~0u);
+    ok(!ret, "mmDrvInstall returned %u for an invalid category\n", ret);
+}
+
 struct wow_app_exit_thread
 {
     HANDLE ready, done, event;
@@ -244,5 +313,7 @@ done:
 START_TEST(winmm)
 {
     test_WOW32ResolveMultiMediaHandle();
+    test_wow_message_exports();
+    test_mmDrvInstall();
     test_WOWAppExit();
 }

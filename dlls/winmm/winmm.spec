@@ -197,15 +197,15 @@
 @ stdcall WOWAppExit(ptr)
 # WinmmLogoff
 # WinmmLogon
-# mid32Message
-# mmDrvInstall
-# aux32Message
-# joy32Message
-# mci32Message
-# mod32Message
-# mxd32Message
-# tid32Message
-# wid32Message
+@ stdcall -arch=i386 mid32Message(long long long long long)
+@ stdcall mmDrvInstall(ptr wstr ptr long)
+@ stdcall -arch=i386 aux32Message(long long long long long)
+@ stdcall -arch=i386 joy32Message(long long long long long)
+@ stdcall -arch=i386 mci32Message(long long long long long)
+@ stdcall -arch=i386 mod32Message(long long long long long)
+@ stdcall -arch=i386 mxd32Message(long long long long long)
+@ stdcall -arch=i386 tid32Message(long long long long long)
+@ stdcall -arch=i386 wid32Message(long long long long long)
 # winmmDbgOut
 # winmmSetDebugLevel
-# wod32Message
+@ stdcall -arch=i386 wod32Message(long long long long long)

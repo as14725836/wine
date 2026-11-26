@@ -224,6 +224,92 @@ void WINAPI WOWAppExit(ULONG_PTR task)
     }
 }
 
+/* The *32Message exports are NTVDM WOW16 thunks, not driver message
+ * procedures. Wine's Win16 multimedia layer uses separate entry points;
+ * these exports follow the native non-WOW path without accessing arguments.
+ */
+
+/**************************************************************************
+ *              aux32Message (WINMM.@)
+ */
+DWORD WINAPI aux32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
+/**************************************************************************
+ *              joy32Message (WINMM.@)
+ */
+DWORD WINAPI joy32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return TIMERR_NOCANDO;
+}
+
+/**************************************************************************
+ *              mci32Message (WINMM.@)
+ */
+DWORD WINAPI mci32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return 1;
+}
+
+/**************************************************************************
+ *              mid32Message (WINMM.@)
+ */
+DWORD WINAPI mid32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
+/**************************************************************************
+ *              mod32Message (WINMM.@)
+ */
+DWORD WINAPI mod32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
+/**************************************************************************
+ *              mxd32Message (WINMM.@)
+ */
+DWORD WINAPI mxd32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
+/**************************************************************************
+ *              tid32Message (WINMM.@)
+ */
+DWORD WINAPI tid32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return TIMERR_NOCANDO;
+}
+
+/**************************************************************************
+ *              wid32Message (WINMM.@)
+ */
+DWORD WINAPI wid32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
+/**************************************************************************
+ *              wod32Message (WINMM.@)
+ */
+DWORD WINAPI wod32Message(DWORD arg1, DWORD arg2, DWORD arg3, DWORD arg4, DWORD arg5)
+{
+    TRACE("%#lx, %#lx, %#lx, %#lx, %#lx\n", arg1, arg2, arg3, arg4, arg5);
+    return MMSYSERR_NOTSUPPORTED;
+}
+
 /**************************************************************************
  * 				auxGetNumDevs		[WINMM.@]
  */
