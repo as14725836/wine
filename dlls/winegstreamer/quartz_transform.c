@@ -100,49 +100,60 @@ static HRESULT transform_query_interface(struct strmbase_filter *iface, REFIID i
     return S_OK;
 }
 
-static HRESULT transform_init_stream(struct strmbase_filter *iface)
-{
-    struct transform *filter = impl_from_strmbase_filter(iface);
-    struct wg_transform_attrs attrs = {0};
-    HRESULT hr;
-
-    if (filter->source.pin.peer)
-    {
-        if (FAILED(hr = wg_sample_queue_create(&filter->sample_queue)))
-            return hr;
-
-        CopyMediaType(&filter->source_mt, &filter->source.pin.mt);
-        if (FAILED(hr = wg_transform_create_quartz(&filter->sink.pin.mt, &filter->source.pin.mt,
-                &attrs, &filter->transform)))
-        {
-            wg_sample_queue_destroy(filter->sample_queue);
-            return hr;
-        }
-
-        hr = IMemAllocator_Commit(filter->source.pAllocator);
-        if (FAILED(hr))
-            ERR("Failed to commit allocator, hr %#lx.\n", hr);
-    }
-
-    return S_OK;
-}
-
 static HRESULT transform_cleanup_stream(struct strmbase_filter *iface)
 {
     struct transform *filter = impl_from_strmbase_filter(iface);
 
     if (filter->source.pin.peer)
-    {
         IMemAllocator_Decommit(filter->source.pAllocator);
 
-        EnterCriticalSection(&filter->filter.stream_cs);
+    EnterCriticalSection(&filter->filter.stream_cs);
+    if (filter->transform)
+    {
         wg_transform_destroy(filter->transform);
+        filter->transform = 0;
+    }
+    if (filter->sample_queue)
+    {
         wg_sample_queue_destroy(filter->sample_queue);
-        LeaveCriticalSection(&filter->filter.stream_cs);
-        FreeMediaType(&filter->source_mt);
+        filter->sample_queue = NULL;
+    }
+    LeaveCriticalSection(&filter->filter.stream_cs);
+    FreeMediaType(&filter->source_mt);
+
+    return S_OK;
+}
+
+static HRESULT transform_init_stream(struct strmbase_filter *iface)
+{
+    struct transform *filter = impl_from_strmbase_filter(iface);
+    struct wg_transform_attrs attrs = {0};
+    AM_MEDIA_TYPE source_mt;
+    HRESULT hr;
+
+    if (!filter->source.pin.peer)
+        return S_OK;
+
+    if (FAILED(hr = CopyMediaType(&source_mt, &filter->source.pin.mt)))
+        return hr;
+    filter->source_mt = source_mt;
+
+    if (FAILED(hr = wg_sample_queue_create(&filter->sample_queue)))
+        goto failed;
+    if (FAILED(hr = wg_transform_create_quartz(&filter->sink.pin.mt, &filter->source.pin.mt,
+            &attrs, &filter->transform)))
+        goto failed;
+    if (FAILED(hr = IMemAllocator_Commit(filter->source.pAllocator)))
+    {
+        ERR("Failed to commit allocator, hr %#lx.\n", hr);
+        goto failed;
     }
 
     return S_OK;
+
+failed:
+    transform_cleanup_stream(iface);
+    return hr;
 }
 
 static const struct strmbase_filter_ops filter_ops =
@@ -337,6 +348,7 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
     if ((hr = IMediaSample_GetMediaType(output_sample, &mt)) == S_OK)
     {
         struct wg_transform_attrs attrs = {0};
+        wg_transform_t transform;
 
         if (compare_media_types(mt, &filter->source_mt))
         {
@@ -349,14 +361,19 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
             TRACE("New format:\n");
             strmbase_dump_media_type(mt);
 
+            if (FAILED(hr = wg_transform_create_quartz(&filter->sink.pin.mt, mt, &attrs, &transform)))
+            {
+                ERR("Failed to recreate transform, hr %#lx.\n", hr);
+                DeleteMediaType(mt);
+                IMediaSample_Release(output_sample);
+                return hr;
+            }
+
+            wg_transform_destroy(filter->transform);
+            filter->transform = transform;
             FreeMediaType(&filter->source_mt);
             filter->source_mt = *mt;
             CoTaskMemFree(mt);
-
-            wg_transform_destroy(filter->transform);
-            if (FAILED(hr = wg_transform_create_quartz(&filter->sink.pin.mt,
-                    &filter->source_mt, &attrs, &filter->transform)))
-                ERR("Failed to recreate transform, hr %#lx.\n", hr);
         }
     }
     else if (hr != S_FALSE)
@@ -366,11 +383,17 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
 
     hr = wg_sample_create_quartz(sample, &wg_sample);
     if (FAILED(hr))
+    {
+        IMediaSample_Release(output_sample);
         return hr;
+    }
 
     hr = wg_transform_push_quartz(filter->transform, wg_sample, filter->sample_queue);
     if (FAILED(hr))
+    {
+        IMediaSample_Release(output_sample);
         return hr;
+    }
 
     for (;;)
     {
@@ -416,13 +439,15 @@ static HRESULT WINAPI transform_sink_receive(struct strmbase_sink *pin, IMediaSa
 static HRESULT transform_sink_begin_flush(struct strmbase_sink *pin)
 {
     struct transform *filter = impl_from_strmbase_filter(pin->pin.filter);
-    HRESULT hr;
+    HRESULT hr = S_OK;
 
     TRACE("(%p)\n", pin);
 
-    hr = wg_transform_flush(filter->transform);
+    if (filter->transform)
+        hr = wg_transform_flush(filter->transform);
 
-    wg_sample_queue_flush(filter->sample_queue, true);
+    if (filter->sample_queue)
+        wg_sample_queue_flush(filter->sample_queue, true);
 
     if (filter->source.pin.peer)
         IPin_BeginFlush(filter->source.pin.peer);

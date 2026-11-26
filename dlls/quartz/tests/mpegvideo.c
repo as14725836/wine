@@ -1346,7 +1346,7 @@ static void test_sink_allocator(IMemInputPin *input)
 
 static void test_send_video(IMemInputPin *input, IMediaSample *sample);
 
-static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control,
+static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control, IBaseFilter *filter,
         IPin *sink, IPin *source, struct testfilter *testsource, struct testfilter *testsink,
         unsigned type_idx, BOOL should_work)
 {
@@ -1383,6 +1383,14 @@ static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control,
     hr = IMemAllocator_GetBuffer(testsink->sink.pAllocator, &sample, NULL, NULL, 0);
     ok(hr == VFW_E_NOT_COMMITTED, "Got hr %#lx.\n", hr);
 
+    /* Exercise cleanup and flushing without stream initialization. */
+    hr = IBaseFilter_Stop(filter);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IPin_BeginFlush(sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IPin_EndFlush(sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
     hr = IMediaControl_Pause(control);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
@@ -1392,6 +1400,16 @@ static void test_source_allocator(IFilterGraph2 *graph, IMediaControl *control,
         IMediaSample_Release(sample);
 
     hr = IMediaControl_Stop(control);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+
+    /* The graph may skip stopped filters, so call the decoder directly. */
+    hr = IBaseFilter_Stop(filter);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IBaseFilter_Stop(filter);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IPin_BeginFlush(sink);
+    ok(hr == S_OK, "Got hr %#lx.\n", hr);
+    hr = IPin_EndFlush(sink);
     ok(hr == S_OK, "Got hr %#lx.\n", hr);
 
     hr = IMemAllocator_GetBuffer(testsink->sink.pAllocator, &sample, NULL, NULL, 0);
@@ -1830,7 +1848,7 @@ static void test_connect_pin(void)
         BOOL should_work;
         if (winetest_platform_is_wine) should_work = video_types[i].works_wine;
         else should_work = video_types[i].works_native;
-        test_source_allocator(graph, control, sink, source, &testsource, &testsink, i, should_work);
+        test_source_allocator(graph, control, filter, sink, source, &testsource, &testsink, i, should_work);
     }
 
     /* Test sink connection. */
