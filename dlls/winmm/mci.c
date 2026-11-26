@@ -68,6 +68,7 @@ static WINE_MCIDRIVER *MciDrivers;
 
 static UINT WINAPI MCI_DefYieldProc(MCIDEVICEID wDevID, DWORD data);
 static UINT MCI_SetCommandTable(HGLOBAL hMem, UINT uDevType);
+static DWORD MCI_CloseTaskDevice(UINT id, DWORD flags, LPMCI_GENERIC_PARMS parms, ULONG_PTR task);
 
 /* dup a string and uppercase it */
 static inline LPWSTR str_dup_upper( LPCWSTR str )
@@ -95,6 +96,8 @@ static LPWINE_MCIDRIVER	MCI_GetDriver(UINT wDevID)
 
 /**************************************************************************
  *              MCI_CleanupTask                 [internal]
+ *
+ * The exiting task must no longer be using its devices.
  */
 void MCI_CleanupTask(ULONG_PTR task)
 {
@@ -114,7 +117,7 @@ void MCI_CleanupTask(ULONG_PTR task)
 
         /* Closing a driver can reenter winmm. Advance even if it cannot close. */
         previous = id;
-        mciSendCommandW(id, MCI_CLOSE, 0, 0);
+        MCI_CloseTaskDevice(id, 0, NULL, task);
     }
 }
 
@@ -1829,14 +1832,24 @@ errCleanUp:
     return dwRet;
 }
 
+static DWORD MCI_CloseTaskDevice(UINT id, DWORD flags, LPMCI_GENERIC_PARMS parms, ULONG_PTR task)
+{
+    LPWINE_MCIDRIVER driver;
+    DWORD ret;
+
+    if (!(driver = MCI_GetDriver(id))) return MCIERR_INVALID_DEVICE_ID;
+    if (driver->CreatorThread != task) return MCIERR_INVALID_DEVICE_NAME;
+
+    ret = SendDriverMessage(driver->hDriver, MCI_CLOSE_DRIVER, flags, (DWORD_PTR)parms);
+    MCI_UnLoadMciDriver(driver);
+    return ret;
+}
+
 /**************************************************************************
  * 			MCI_Close				[internal]
  */
 static	DWORD MCI_Close(UINT wDevID, DWORD dwParam, LPMCI_GENERIC_PARMS lpParms)
 {
-    DWORD		dwRet;
-    LPWINE_MCIDRIVER	wmd;
-
     TRACE("(%04x, %08lX, %p)\n", wDevID, dwParam, lpParms);
 
     /* Every device must handle MCI_NOTIFY on its own. */
@@ -1859,18 +1872,7 @@ static	DWORD MCI_Close(UINT wDevID, DWORD dwParam, LPMCI_GENERIC_PARMS lpParms)
 	return 0;
     }
 
-    if (!(wmd = MCI_GetDriver(wDevID))) {
-	return MCIERR_INVALID_DEVICE_ID;
-    }
-
-    if(wmd->CreatorThread != GetCurrentThreadId())
-        return MCIERR_INVALID_DEVICE_NAME;
-
-    dwRet = MCI_SendCommandFrom32(wDevID, MCI_CLOSE_DRIVER, dwParam, (DWORD_PTR)lpParms);
-
-    MCI_UnLoadMciDriver(wmd);
-
-    return dwRet;
+    return MCI_CloseTaskDevice(wDevID, dwParam, lpParms, GetCurrentThreadId());
 }
 
 /**************************************************************************

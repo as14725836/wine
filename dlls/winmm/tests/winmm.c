@@ -154,6 +154,7 @@ struct wow_app_exit_thread
 {
     HANDLE ready, done, event;
     MMRESULT timers[3];
+    MCIDEVICEID device;
 };
 
 static MMRESULT create_wow_app_exit_timer(HANDLE event)
@@ -165,26 +166,15 @@ static MMRESULT create_wow_app_exit_timer(HANDLE event)
     return timer;
 }
 
-static DWORD WINAPI wow_app_exit_thread(void *arg)
-{
-    struct wow_app_exit_thread *data = arg;
-    unsigned int i;
-
-    for (i = 0; i < ARRAY_SIZE(data->timers); ++i)
-        data->timers[i] = create_wow_app_exit_timer(data->event);
-    SetEvent(data->ready);
-    WaitForSingleObject(data->done, INFINITE);
-    return 0;
-}
-
-static MCIDEVICEID open_wow_app_exit_device(void)
+static MCIDEVICEID open_wow_app_exit_device(const char *alias)
 {
     MCI_OPEN_PARMSA parms = {0};
     MCIERROR err;
 
     parms.lpstrDeviceType = "waveaudio";
     parms.lpstrElementName = "";
-    err = mciSendCommandA(0, MCI_OPEN, MCI_OPEN_ELEMENT | MCI_OPEN_TYPE, (DWORD_PTR)&parms);
+    parms.lpstrAlias = alias;
+    err = mciSendCommandA(0, MCI_OPEN, MCI_OPEN_ELEMENT | MCI_OPEN_TYPE | MCI_OPEN_ALIAS, (DWORD_PTR)&parms);
     if (err)
     {
         win_skip("Cannot open a new waveaudio device, error %lu\n", err);
@@ -193,6 +183,25 @@ static MCIDEVICEID open_wow_app_exit_device(void)
     ok((ULONG_PTR)mciGetCreatorTask(parms.wDeviceID) == GetCurrentThreadId(),
             "Unexpected creator task %p\n", mciGetCreatorTask(parms.wDeviceID));
     return parms.wDeviceID;
+}
+
+static DWORD WINAPI wow_app_exit_thread(void *arg)
+{
+    struct wow_app_exit_thread *data = arg;
+    unsigned int i;
+    MCIERROR err;
+
+    data->device = open_wow_app_exit_device("wow_app_exit_worker");
+    for (i = 0; i < ARRAY_SIZE(data->timers); ++i)
+        data->timers[i] = create_wow_app_exit_timer(data->event);
+    SetEvent(data->ready);
+    WaitForSingleObject(data->done, INFINITE);
+    if (data->device && mciGetCreatorTask(data->device))
+    {
+        err = mciSendCommandA(data->device, MCI_CLOSE, MCI_WAIT, 0);
+        ok(!err, "Worker MCI_CLOSE failed, error %lu\n", err);
+    }
+    return 0;
 }
 
 static void check_wow_app_exit_timer(MMRESULT *timer, MMRESULT expected)
@@ -243,7 +252,7 @@ static void test_WOWAppExit(void)
     ok(ret == WAIT_OBJECT_0, "Wait returned %#lx\n", ret);
     if (ret != WAIT_OBJECT_0) goto done;
 
-    device = open_wow_app_exit_device();
+    device = open_wow_app_exit_device("wow_app_exit_main");
     timer = create_wow_app_exit_timer(data.event);
     unmatched = current_id ^ 0x80000000;
     if (!unmatched || unmatched == thread_id) unmatched ^= 0x40000000;
@@ -253,6 +262,8 @@ static void test_WOWAppExit(void)
         ok((ULONG_PTR)mciGetCreatorTask(device) == current_id, "Unmatched task closed the MCI device\n");
     check_wow_app_exit_timer(&timer, TIMERR_NOERROR);
     check_wow_app_exit_timer(&data.timers[0], TIMERR_NOERROR);
+    if (data.device)
+        ok((ULONG_PTR)mciGetCreatorTask(data.device) == thread_id, "Unmatched task closed the worker's MCI device\n");
 
 #ifdef _WIN64
     /* MCI uses the full task value, but timer ownership uses only its low DWORD. */
@@ -275,12 +286,23 @@ static void test_WOWAppExit(void)
     app_exit(current_id);
     check_wow_app_exit_timer(&data.timers[1], TIMERR_NOERROR);
 
-    /* Keep the worker alive: the main thread must be able to clean up its timers. */
+    /* Ordinary MCI_CLOSE must still reject a device owned by another thread. */
+    if (data.device)
+    {
+        ok((ULONG_PTR)mciGetCreatorTask(data.device) == thread_id, "Current task closed the worker's MCI device\n");
+        err = mciSendCommandA(data.device, MCI_CLOSE, MCI_WAIT, 0);
+        ok(err == MCIERR_INVALID_DEVICE_NAME, "Foreign MCI_CLOSE returned %lu\n", err);
+        ok((ULONG_PTR)mciGetCreatorTask(data.device) == thread_id, "Foreign MCI_CLOSE closed the worker's MCI device\n");
+    }
+
+    /* The worker is idle: clean up its devices and timers from the main thread. */
     app_exit(thread_id);
+    if (data.device)
+        ok(!mciGetCreatorTask(data.device), "Worker's MCI device is still open\n");
     check_wow_app_exit_timer(&data.timers[2], TIMERR_NOCANDO);
     app_exit(thread_id);
 
-    device = open_wow_app_exit_device();
+    device = open_wow_app_exit_device("wow_app_exit_main");
     timer = create_wow_app_exit_timer(data.event);
     /* Task zero may also affect the timer thread, so do not create timers after this. */
     app_exit(0);
