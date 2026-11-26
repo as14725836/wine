@@ -704,6 +704,7 @@ W32KAPI void window_surface_set_clip( struct window_surface *surface, HRGN clip_
     }
     else if (clip_region && !NtGdiEqualRgn( clip_region, surface->clip_region ))
     {
+        static const RECT empty;
         WINEREGION *data;
 
         TRACE( "hwnd %p, surface %p %s, setting clip region %p\n", surface->hwnd, surface,
@@ -714,7 +715,8 @@ W32KAPI void window_surface_set_clip( struct window_surface *surface, HRGN clip_
 
         if ((data = GDI_GetObjPtr( clip_region, NTGDI_OBJ_REGION )))
         {
-            surface->funcs->set_clip( surface, data->rects, data->numRects );
+            if (!data->numRects) surface->funcs->set_clip( surface, &empty, 1 );
+            else surface->funcs->set_clip( surface, data->rects, data->numRects );
             GDI_ReleaseObj( clip_region );
         }
     }
