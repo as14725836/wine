@@ -196,7 +196,8 @@ def build_xml_compat(cache):
         if "AArch64" not in headers or not re.search(r"\(SONAME\).*\[libxml2\.so\.2\]", dynamic):
             raise RuntimeError("Wrong architecture or SONAME for XML compatibility library")
         needed = re.findall(r"\(NEEDED\).*\[(.*?)\]", dynamic)
-        if not needed or set(needed) - {"libc.so.6", "libm.so.6"}:
+        # glibc's TLS support can add its loader as a direct dependency.
+        if not needed or set(needed) - {"libc.so.6", "libm.so.6", "ld-linux-aarch64.so.1"}:
             raise RuntimeError(f"Unexpected XML compatibility dependencies: {needed}")
         if any(version not in versions for version in ("LIBXML2_2.4.30", "LIBXML2_2.6.0")):
             raise RuntimeError("XML compatibility library lacks LLVM's symbol versions")
