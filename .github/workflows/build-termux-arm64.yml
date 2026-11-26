@@ -1,0 +1,153 @@
+name: Termux glibc ARM64 full build
+
+# Manual only: this workflow neither publishes Releases nor moves tags.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: termux-arm64-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    defaults:
+      run:
+        shell: bash
+    env:
+      WINE_COMMIT: 6f1e28b249b073e36b5f68eea42f2631163b091f
+      GLIBC_PREFIX: /data/data/com.termux/files/usr/glibc
+      PREFIX: /data/data/com.termux/files/usr
+    steps:
+      - name: Check out build infrastructure
+        uses: actions/checkout@v4
+        with:
+          path: build-tools
+          persist-credentials: false
+
+      - name: Check out pinned Wine source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.WINE_COMMIT }}
+          path: wine-source
+          persist-credentials: false
+
+      - name: Install host build utilities
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            autoconf bison build-essential ca-certificates dpkg-dev flex \
+            git perl pkg-config python3 xz-utils
+          mkdir -p "$RUNNER_TEMP/wine-termux-work" "$RUNNER_TEMP/termux-ci-diagnostics"
+
+      - name: Verify and extract locked Termux glibc packages
+        run: |
+          set -euo pipefail
+          python3 build-tools/ci/prepare_termux_glibc_ci.py --check-only
+          cp build-tools/ci/termux-glibc-aarch64.lock.json "$RUNNER_TEMP/termux-ci-diagnostics/"
+          python3 build-tools/ci/prepare_termux_glibc_ci.py --install \
+            --cache-dir "$RUNNER_TEMP/termux-glibc-packages" \
+            2>&1 | tee "$RUNNER_TEMP/termux-ci-diagnostics/bootstrap.log"
+
+      - name: Apply pinned source prerequisites
+        run: |
+          set -euo pipefail
+          test "$(git -C wine-source rev-parse HEAD)" = "$WINE_COMMIT"
+          patch="$GITHUB_WORKSPACE/build-tools/ci/patches/dwproton-arm64-prerequisites.patch"
+          git -C wine-source apply --check "$patch"
+          git -C wine-source apply "$patch"
+          git -C wine-source diff --stat
+          git -C build-tools rev-parse HEAD > "$RUNNER_TEMP/termux-ci-diagnostics/infrastructure-commit.txt"
+
+      - name: Supervise full native ARM64 build and staged validation
+        run: |
+          set -euo pipefail
+          unset LD_LIBRARY_PATH LD_PRELOAD CPATH C_INCLUDE_PATH CPLUS_INCLUDE_PATH LIBRARY_PATH
+          unset PKG_CONFIG_PATH PKG_CONFIG_LIBDIR PKG_CONFIG_SYSROOT_DIR
+          export CC="$GLIBC_PREFIX/bin/clang"
+          export CXX="$GLIBC_PREFIX/bin/clang++"
+          export aarch64_CC="$GLIBC_PREFIX/bin/clang"
+          export CFLAGS="-O2"
+          export CXXFLAGS="-O2"
+          # Wine's final Unix links consume LDFLAGS without CFLAGS/CXXFLAGS.
+          export LDFLAGS="-fuse-ld=lld"
+          export SHELL=/bin/bash CONFIG_SHELL=/bin/bash
+          export PKG_CONFIG=/usr/bin/pkg-config
+          # Prefer glibc tools; invoke host Python by its absolute Ubuntu path.
+          export PATH="$GLIBC_PREFIX/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+          {
+            uname -a
+            for tool in clang clang++ ld.lld ld make perl python3 pkg-config readelf; do
+              command -v "$tool"
+            done
+            "$CC" --print-search-dirs
+            "$CC" -print-prog-name=ld.lld
+            "$CC" -print-file-name=crt1.o
+            "$CC" -print-file-name=libgcc.a
+            readelf -d "$CC"
+            readelf -d "$GLIBC_PREFIX/bin/ld.lld"
+          } > "$RUNNER_TEMP/termux-ci-diagnostics/tool-paths.txt" 2>&1
+          /usr/bin/python3 build-tools/ci/build_arm64_termux.py supervise \
+            --profile termux \
+            --source "$GITHUB_WORKSPACE/wine-source" --commit "$WINE_COMMIT" \
+            --work-dir "$RUNNER_TEMP/wine-termux-work" \
+            --glibc-prefix "$GLIBC_PREFIX" --prefix "$GLIBC_PREFIX/opt/wine-arm64" \
+            --jobs 4 --attempts 3 --heartbeat 30 --retry-delay 60 --idle-timeout 1800 \
+            --configure-arg=--with-x --configure-arg=--with-freetype \
+            --configure-arg=--with-fontconfig --configure-arg=--with-gnutls \
+            --configure-arg=--without-wayland --configure-arg=--without-pulse \
+            --configure-arg=--without-gstreamer --configure-arg=--without-ffmpeg
+
+      - name: Record build result
+        if: always()
+        env:
+          BUILD_JOB_STATUS: ${{ job.status }}
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import os
+          from pathlib import Path
+          work = Path(os.environ["RUNNER_TEMP"]) / "wine-termux-work"
+          status = work / "status.json"
+          text = status.read_text() if status.exists() else "No supervisor status; see bootstrap or checkout logs."
+          print(text)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as out:
+              out.write("### Termux glibc native ARM64 Wine\n\n")
+              out.write("Job status: " + os.environ["BUILD_JOB_STATUS"] + "\n\n")
+              out.write("Wine source: `" + os.environ["WINE_COMMIT"] + "` plus prerequisites patch.\n\n")
+              out.write("Build environment: GitHub ARM64 Linux with locked official Termux glibc packages. "
+                        "Completion is reported by the job and supervisor status above. "
+                        "Android/Termux device execution is not tested.\n\n")
+              out.write("```json\n" + text + "\n```\n")
+          PY
+
+      - name: Upload complete Wine archive
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-termux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+          path: |
+            ${{ runner.temp }}/wine-termux-work/artifacts/*.tar.gz
+            ${{ runner.temp }}/wine-termux-work/artifacts/*.sha256
+
+      - name: Upload diagnostics on success or failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wine-termux-arm64-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/termux-ci-diagnostics/
+            ${{ runner.temp }}/termux-glibc-packages/toolchain-checks.txt
+            ${{ runner.temp }}/wine-termux-work/logs/
+            ${{ runner.temp }}/wine-termux-work/*.json
+            ${{ runner.temp }}/wine-termux-work/source-changes.patch
+            ${{ runner.temp }}/wine-termux-work/build/config.log
+            ${{ runner.temp }}/wine-termux-work/build/Makefile

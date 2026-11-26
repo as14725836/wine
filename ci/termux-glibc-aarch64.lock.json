@@ -1,0 +1,681 @@
+{
+  "schema": 1,
+  "base_url": "https://packages.termux.dev/apt/termux-glibc/",
+  "prefix": "/data/data/com.termux/files/usr/glibc",
+  "index_url": "https://packages.termux.dev/apt/termux-glibc/dists/glibc/stable/binary-aarch64/Packages.gz",
+  "index_gzip_sha256": "58969522196387813ad1c23efee7723d08d47abd5eeac11e53c28d16a03cd516",
+  "captured_at_utc": "2026-11-26T00:08:46.589013+00:00",
+  "roots": [
+    "glibc",
+    "clang-glibc",
+    "freetype-glibc",
+    "fontconfig-glibc",
+    "libx11-glibc",
+    "libxext-glibc",
+    "libxrender-glibc",
+    "libxi-glibc",
+    "libxrandr-glibc",
+    "libxcursor-glibc",
+    "libxinerama-glibc",
+    "libxcomposite-glibc",
+    "libxfixes-glibc",
+    "libgnutls-glibc",
+    "libjpeg-turbo-glibc",
+    "alsa-lib-glibc",
+    "dbus-glibc",
+    "libglvnd-glibc"
+  ],
+  "host_configuration_dependencies": [
+    "resolv-conf"
+  ],
+  "packages": [
+    {
+      "name": "alsa-lib-glibc",
+      "version": "1.2.16.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/a/alsa-lib-glibc/alsa-lib-glibc_1.2.16.1_aarch64.deb",
+      "size": 524428,
+      "sha256": "f1c2f2048d210268d5e7f197cf120bc25a5327cd29c979e66159351c1b7d2dfb",
+      "depends": "glibc"
+    },
+    {
+      "name": "bash-glibc",
+      "version": "5.3.15",
+      "architecture": "aarch64",
+      "filename": "pool/stable/b/bash-glibc/bash-glibc_5.3.15_aarch64.deb",
+      "size": 1103664,
+      "sha256": "21975941113b1796230a0a99d186d682c21a363b60612cb0400ad619b0cc1cf6",
+      "depends": "readline-glibc, ncurses-glibc"
+    },
+    {
+      "name": "binutils-glibc",
+      "version": "2.44",
+      "architecture": "aarch64",
+      "filename": "pool/stable/b/binutils-glibc/binutils-glibc_2.44_aarch64.deb",
+      "size": 1600068,
+      "sha256": "5adb25ea8d424edaead4d2170ceac8bed2eae8014ed74852dfec7f9a5e12579e",
+      "depends": "libbz2-glibc, libdebuginfod-glibc, binutils-libs-glibc (= 2.44)"
+    },
+    {
+      "name": "binutils-libs-glibc",
+      "version": "2.44",
+      "architecture": "aarch64",
+      "filename": "pool/stable/b/binutils-libs-glibc/binutils-libs-glibc_2.44_aarch64.deb",
+      "size": 2420224,
+      "sha256": "dc2a43ef9c80bf95c57943ad75bce6125f6c1310356f923dd5198b722ea9524d",
+      "depends": "glibc, libjansson-glibc, libelf-glibc, zlib-glibc, zstd-glibc"
+    },
+    {
+      "name": "brotli-glibc",
+      "version": "1.2.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/b/brotli-glibc/brotli-glibc_1.2.0_aarch64.deb",
+      "size": 393668,
+      "sha256": "83fd5c418d38e4dfa7d050cbd1c00e082658d9680441587cd76eb7f8416bd038",
+      "depends": "gcc-libs-glibc"
+    },
+    {
+      "name": "ca-certificates-glibc",
+      "version": "2026.08.13",
+      "architecture": "all",
+      "filename": "pool/stable/c/ca-certificates-glibc/ca-certificates-glibc_2026.08.13_all.deb",
+      "size": 105504,
+      "sha256": "9cb0fcf49cee5c39cc3d4ff2e373aff5dc603b75ccceeb27e3be9c813fb290b1",
+      "depends": ""
+    },
+    {
+      "name": "clang-glibc",
+      "version": "19.1.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/c/clang-glibc/clang-glibc_19.1.3_aarch64.deb",
+      "size": 97553812,
+      "sha256": "e5e806b7ff3a5ed278d2d5e6e4b35a74a3194b86cb65e2d6a0d26d683d7c4d63",
+      "depends": "libllvm-glibc, gcc-glibc, compiler-rt-glibc, lld-glibc"
+    },
+    {
+      "name": "compiler-rt-glibc",
+      "version": "19.1.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/c/compiler-rt-glibc/compiler-rt-glibc_19.1.3_aarch64.deb",
+      "size": 28322796,
+      "sha256": "7b926d950f324a7a5d241f69c8b6d430c344ec9460bd19ea7c389ad632c548b8",
+      "depends": "gcc-libs-glibc"
+    },
+    {
+      "name": "dbus-glibc",
+      "version": "1.15.6-2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/d/dbus-glibc/dbus-glibc_1.15.6-2_aarch64.deb",
+      "size": 1568152,
+      "sha256": "a1ee6a6519c54ebfcd6157c89481265d5aafe2d7ddb25bd9df0d3308c3a9bda1",
+      "depends": "libexpat-glibc, libx11-glibc"
+    },
+    {
+      "name": "e2fsprogs-glibc",
+      "version": "1.47.4",
+      "architecture": "aarch64",
+      "filename": "pool/stable/e/e2fsprogs-glibc/e2fsprogs-glibc_1.47.4_aarch64.deb",
+      "size": 808464,
+      "sha256": "5829722f2868f56d4c14b599d12bd9a8a4aa8740f15ddd7b7d3b0d4142306e1e",
+      "depends": "libblkid-glibc, libuuid-glibc, bash-glibc"
+    },
+    {
+      "name": "fontconfig-glibc",
+      "version": "2.18.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/f/fontconfig-glibc/fontconfig-glibc_2.18.3_aarch64.deb",
+      "size": 307296,
+      "sha256": "2685523cf089123a6c078c9832de3a9889f8b8edf580153171ff22271ba664b3",
+      "depends": "freetype-glibc, libexpat-glibc"
+    },
+    {
+      "name": "freetype-glibc",
+      "version": "2.14.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/f/freetype-glibc/freetype-glibc_2.14.3_aarch64.deb",
+      "size": 451888,
+      "sha256": "ffa8d63d8d0e4720422eb882ff3a09f1f31dc0633b5eac41b7f1c5cc7a668313",
+      "depends": "brotli-glibc, libbz2-glibc, libpng-glibc, zlib-glibc"
+    },
+    {
+      "name": "gcc-glibc",
+      "version": "14.2.1-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/g/gcc-glibc/gcc-glibc_14.2.1-1_aarch64.deb",
+      "size": 63996836,
+      "sha256": "213461d24ee80d11c40b5b3ea39941107feffb41756debf2030b2740cd1338fa",
+      "depends": "binutils-glibc, libmpc-glibc, zstd-glibc, libisl-glibc, gcc-libs-glibc (= 14.2.1-1)"
+    },
+    {
+      "name": "gcc-libs-glibc",
+      "version": "14.2.1-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/g/gcc-libs-glibc/gcc-libs-glibc_14.2.1-1_aarch64.deb",
+      "size": 24314568,
+      "sha256": "919c2e80a629d674dd450b0a0edd11378284f1ed9d2a8fd3c9c91d7ac72f041f",
+      "depends": "glibc"
+    },
+    {
+      "name": "glibc",
+      "version": "2.44",
+      "architecture": "aarch64",
+      "filename": "pool/stable/g/glibc/glibc_2.44_aarch64.deb",
+      "size": 9813364,
+      "sha256": "5392d254e84c436e96783bcb6ffffe429d6b24c7ad00490f23f06f66c4769fb6",
+      "depends": "linux-api-headers-glibc"
+    },
+    {
+      "name": "json-c-glibc",
+      "version": "0.19",
+      "architecture": "aarch64",
+      "filename": "pool/stable/j/json-c-glibc/json-c-glibc_0.19_aarch64.deb",
+      "size": 58676,
+      "sha256": "70b94b7719b8975a37e8cd19f8887eea833ee41d7a2fde7ff9ce0c327f9bee76",
+      "depends": "glibc"
+    },
+    {
+      "name": "krb5-glibc",
+      "version": "1.22.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/k/krb5-glibc/krb5-glibc_1.22.2_aarch64.deb",
+      "size": 1174824,
+      "sha256": "6e866245a70f4dfd46ca63705a2514c0f00975cde2029b171710b5f1645547c2",
+      "depends": "e2fsprogs-glibc, libverto-glibc"
+    },
+    {
+      "name": "libblkid-glibc",
+      "version": "2.42.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libb/libblkid-glibc/libblkid-glibc_2.42.1_aarch64.deb",
+      "size": 139368,
+      "sha256": "df3f8b1797916a1e5fc1948ea164c056b0679cae5977c90af36e6b39d22c40c8",
+      "depends": "glibc"
+    },
+    {
+      "name": "libbz2-glibc",
+      "version": "1.0.8-3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libb/libbz2-glibc/libbz2-glibc_1.0.8-3_aarch64.deb",
+      "size": 32892,
+      "sha256": "984f6f80b4cd115d8adf99aee79f3cbbc5c073bc1fc708e8decd0a13323df4f0",
+      "depends": "glibc, bash-glibc"
+    },
+    {
+      "name": "libcurl-glibc",
+      "version": "8.22.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libc/libcurl-glibc/libcurl-glibc_8.22.0_aarch64.deb",
+      "size": 1095400,
+      "sha256": "c9ee754949bfddfa3d060401c5d13485d51dabb75aa271c4b80754bea14ada7f",
+      "depends": "libnghttp2-glibc, libssh2-glibc, openssl-glibc (>= 3.0.3), krb5-glibc, brotli-glibc, libpsl-glibc"
+    },
+    {
+      "name": "libdebuginfod-glibc",
+      "version": "0.196",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libd/libdebuginfod-glibc/libdebuginfod-glibc_0.196_aarch64.deb",
+      "size": 24048,
+      "sha256": "5d49c0046cea3e0418f25a944dacb7d0c2bdc6493ce13e068cf7edd8ecf9826d",
+      "depends": "libcurl-glibc, json-c-glibc, libelf-glibc (= 0.196)"
+    },
+    {
+      "name": "libedit-glibc",
+      "version": "20260512-3.1-0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libe/libedit-glibc/libedit-glibc_20260512-3.1-0_aarch64.deb",
+      "size": 108400,
+      "sha256": "1ba05189db17118b2c597bd85b235ae72d1ae7a8cba4a5efda8095646c74791b",
+      "depends": "ncurses-glibc"
+    },
+    {
+      "name": "libelf-glibc",
+      "version": "0.196",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libe/libelf-glibc/libelf-glibc_0.196_aarch64.deb",
+      "size": 233176,
+      "sha256": "90459013f349d41f60585f2474b2b1ee2474635c4ba53df44aa3d3a805832cf9",
+      "depends": "zlib-glibc, zstd-glibc"
+    },
+    {
+      "name": "libevent-glibc",
+      "version": "2.1.13",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libe/libevent-glibc/libevent-glibc_2.1.13_aarch64.deb",
+      "size": 250880,
+      "sha256": "4b153adf573b5850046a94830376c03d9bc839095a0c0a2ff24d341829c18c6f",
+      "depends": "openssl-glibc"
+    },
+    {
+      "name": "libexpat-glibc",
+      "version": "2.8.4",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libe/libexpat-glibc/libexpat-glibc_2.8.4_aarch64.deb",
+      "size": 121204,
+      "sha256": "496f29de09f46597ca21ddddfec1c20ce4ff75766af50379527ddf2aa33e4896",
+      "depends": "gcc-libs-glibc"
+    },
+    {
+      "name": "libffi-glibc",
+      "version": "3.8.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libf/libffi-glibc/libffi-glibc_3.8.0_aarch64.deb",
+      "size": 42236,
+      "sha256": "21317646531fcd63e8fa005e2b3de55947781a203f8d9206ce9348ec947fdb63",
+      "depends": "glibc"
+    },
+    {
+      "name": "libglvnd-glibc",
+      "version": "1.7.0-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libg/libglvnd-glibc/libglvnd-glibc_1.7.0-1_aarch64.deb",
+      "size": 320536,
+      "sha256": "da0a0943e40c05f3ed29e5391e4a106717bb495bc55adf6a7b7b036e62bf1240",
+      "depends": "libxext-glibc"
+    },
+    {
+      "name": "libgmp-glibc",
+      "version": "6.3.0-2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libg/libgmp-glibc/libgmp-glibc_6.3.0-2_aarch64.deb",
+      "size": 343000,
+      "sha256": "949244528741732444a89976237e8dedd72cc93143a808cef8d00a790aece631",
+      "depends": "gcc-libs-glibc"
+    },
+    {
+      "name": "libgnutls-glibc",
+      "version": "3.8.13",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libg/libgnutls-glibc/libgnutls-glibc_3.8.13_aarch64.deb",
+      "size": 2313212,
+      "sha256": "42623e1a17e01ab85c486241be055df74b996596edb1f285de30a0a4c0de1de8",
+      "depends": "libgmp-glibc, libtasn1-glibc, readline-glibc, zlib-glibc, libnettle-glibc, p11-kit-glibc, libidn2-glibc, zstd-glibc, libunistring-glibc, brotli-glibc"
+    },
+    {
+      "name": "libicu-glibc",
+      "version": "78.3-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libi/libicu-glibc/libicu-glibc_78.3-1_aarch64.deb",
+      "size": 10745652,
+      "sha256": "dde70519c8a1d6d581c3889b412f0c6b99f2285e616eaf143912928662104f28",
+      "depends": "gcc-libs-glibc, bash-glibc"
+    },
+    {
+      "name": "libidn2-glibc",
+      "version": "2.3.8",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libi/libidn2-glibc/libidn2-glibc_2.3.8_aarch64.deb",
+      "size": 109628,
+      "sha256": "d1b55a3f303d6eb4c13e13df458360ecd0a1273af274eb5c359179a0a0d01307",
+      "depends": "libunistring-glibc, gcc-libs-glibc"
+    },
+    {
+      "name": "libisl-glibc",
+      "version": "0.28",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libi/libisl-glibc/libisl-glibc_0.28_aarch64.deb",
+      "size": 895372,
+      "sha256": "21eed1a98135d6d5951027bfaff65cf2fd5bbea29249c1dc78886d1ce0d1bdf4",
+      "depends": "libgmp-glibc"
+    },
+    {
+      "name": "libjansson-glibc",
+      "version": "2.15.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libj/libjansson-glibc/libjansson-glibc_2.15.1_aarch64.deb",
+      "size": 57448,
+      "sha256": "6e3dfc73825ae17a1309f9d93ecbe760ab52ead7cfe50e95bb6b254ac24c9f1b",
+      "depends": "glibc"
+    },
+    {
+      "name": "libjpeg-turbo-glibc",
+      "version": "3.2.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libj/libjpeg-turbo-glibc/libjpeg-turbo-glibc_3.2.0_aarch64.deb",
+      "size": 530560,
+      "sha256": "e599199b48ec38c3a1381b248c670b1da47f9aba7f1e54a4e5848a9af1f2bf28",
+      "depends": "glibc"
+    },
+    {
+      "name": "libllvm-glibc",
+      "version": "19.1.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libl/libllvm-glibc/libllvm-glibc_19.1.3_aarch64.deb",
+      "size": 33826092,
+      "sha256": "b963b8fd6c12b85e674adf8b3a88182e894fbc8a8f09d02c8bca02097a7eb31f",
+      "depends": "gcc-libs-glibc, zlib-glibc, zstd-glibc, libffi-glibc, libedit-glibc, ncurses-glibc, libxml2-glibc"
+    },
+    {
+      "name": "liblz4-glibc",
+      "version": "1.10.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libl/liblz4-glibc/liblz4-glibc_1.10.0_aarch64.deb",
+      "size": 84592,
+      "sha256": "6f94456c2d3ec145e07d1956db35c4c4f7364d3c116cef721d78c63c6ce4ed9a",
+      "depends": "glibc"
+    },
+    {
+      "name": "liblzma-glibc",
+      "version": "5.8.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libl/liblzma-glibc/liblzma-glibc_5.8.3_aarch64.deb",
+      "size": 208460,
+      "sha256": "f5d9570577ee2379e58ebcc8bfafb6b41482329769441b9c35c7fa63f0aff1ce",
+      "depends": "glibc, bash-glibc"
+    },
+    {
+      "name": "libmpc-glibc",
+      "version": "1.4.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libm/libmpc-glibc/libmpc-glibc_1.4.1_aarch64.deb",
+      "size": 99036,
+      "sha256": "f9f869bc62624cef1e65429e39787aca25d0636b8e5abf5792396f07c4988ab5",
+      "depends": "libgmp-glibc, libmpfr-glibc"
+    },
+    {
+      "name": "libmpfr-glibc",
+      "version": "4.2.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libm/libmpfr-glibc/libmpfr-glibc_4.2.1_aarch64.deb",
+      "size": 536336,
+      "sha256": "c536eac8ee1f4e1d9f887c3e4a864a1062afe6d32827e5f46e7160f0d014ac0e",
+      "depends": "libgmp-glibc"
+    },
+    {
+      "name": "libnettle-glibc",
+      "version": "4.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libn/libnettle-glibc/libnettle-glibc_4.0_aarch64.deb",
+      "size": 880528,
+      "sha256": "4621639fd2cf5c3aa5ebafbff192da3ca56811833f44dd57f62539c0db777e3c",
+      "depends": "libgmp-glibc, gcc-libs-glibc"
+    },
+    {
+      "name": "libnghttp2-glibc",
+      "version": "1.70.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libn/libnghttp2-glibc/libnghttp2-glibc_1.70.0_aarch64.deb",
+      "size": 148528,
+      "sha256": "58e8bdc8ad4d5206446c786e65b247c8b9f8f31d5732e8406476dafa66c7615c",
+      "depends": "glibc"
+    },
+    {
+      "name": "libpng-glibc",
+      "version": "1.6.58",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libp/libpng-glibc/libpng-glibc_1.6.58_aarch64.deb",
+      "size": 244716,
+      "sha256": "da3d5b4d0ef4953211f700b95258c0d5c69854d4a2eabd6fdc094dad5ade23c5",
+      "depends": "zlib-glibc, bash-glibc"
+    },
+    {
+      "name": "libpsl-glibc",
+      "version": "0.23.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libp/libpsl-glibc/libpsl-glibc_0.23.3_aarch64.deb",
+      "size": 69612,
+      "sha256": "930b854a44f56b48f574b1bb61171d3b5fbf6e9dbcc4d4bde31f18ee76b9b73a",
+      "depends": "libidn2-glibc, libunistring-glibc"
+    },
+    {
+      "name": "libssh2-glibc",
+      "version": "1.11.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libs/libssh2-glibc/libssh2-glibc_1.11.1_aarch64.deb",
+      "size": 238564,
+      "sha256": "b57ae45bf81d4aab13d8dd306be905373811b6da0cb8b5cc169dcc00f987a51b",
+      "depends": "openssl-glibc, zlib-glibc"
+    },
+    {
+      "name": "libtasn1-glibc",
+      "version": "4.21.0",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libt/libtasn1-glibc/libtasn1-glibc_4.21.0_aarch64.deb",
+      "size": 110128,
+      "sha256": "9750f01e7e6a19313e839a67552b705c4ae56b82cbda00197514bcc2b4f67f0c",
+      "depends": "glibc"
+    },
+    {
+      "name": "libunistring-glibc",
+      "version": "1.4.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libu/libunistring-glibc/libunistring-glibc_1.4.2_aarch64.deb",
+      "size": 560696,
+      "sha256": "4a12274ed61a532976a658beea88e7fdd487998ba1dc9118db5f465c643d69c6",
+      "depends": "glibc"
+    },
+    {
+      "name": "libuuid-glibc",
+      "version": "2.42.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libu/libuuid-glibc/libuuid-glibc_2.42.1_aarch64.deb",
+      "size": 15860,
+      "sha256": "54653e2081fd79d9f8f69c966c2aeb8fdd4af81de2704df9ddf21ae8137f50f6",
+      "depends": "glibc"
+    },
+    {
+      "name": "libverto-glibc",
+      "version": "0.3.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libv/libverto-glibc/libverto-glibc_0.3.2_aarch64.deb",
+      "size": 18348,
+      "sha256": "fc30abd692fb6cd0bc19fddeab22c1bea42e0dd57f0c972219edfa7d8b570eab",
+      "depends": "libevent-glibc"
+    },
+    {
+      "name": "libx11-glibc",
+      "version": "1.8.11",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libx11-glibc/libx11-glibc_1.8.11_aarch64.deb",
+      "size": 1984312,
+      "sha256": "a0c249dd82f5bcf46d61501a436fcfc2e317869a06913c4b8488c9d3d19dca1a",
+      "depends": "libxcb-glibc, xorgproto-glibc"
+    },
+    {
+      "name": "libxau-glibc",
+      "version": "1.0.12",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxau-glibc/libxau-glibc_1.0.12_aarch64.deb",
+      "size": 10528,
+      "sha256": "7f2c0624638feed515899e3acbb1ec475ba97c9442b5a276dabaea652d9db62c",
+      "depends": ""
+    },
+    {
+      "name": "libxcb-glibc",
+      "version": "1.17.0-1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxcb-glibc/libxcb-glibc_1.17.0-1_aarch64.deb",
+      "size": 952208,
+      "sha256": "5e737e2bb57a0a1919be298b5f60c8a6b8f9cc79225f1b90c566bcdba73133a0",
+      "depends": "libxau-glibc, libxdmcp-glibc, xcb-proto-glibc"
+    },
+    {
+      "name": "libxcomposite-glibc",
+      "version": "0.4.6",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxcomposite-glibc/libxcomposite-glibc_0.4.6_aarch64.deb",
+      "size": 10252,
+      "sha256": "6dc0ea80780ab017ce1ec52c1c6d827a544f8d74746c1fc2165f67e2600f73bd",
+      "depends": "libxfixes-glibc"
+    },
+    {
+      "name": "libxcursor-glibc",
+      "version": "1.2.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxcursor-glibc/libxcursor-glibc_1.2.3_aarch64.deb",
+      "size": 31976,
+      "sha256": "7901dd136016df9d694e38bb17923812f539241475e7ac97935c8dcdfcceb902",
+      "depends": "libxfixes-glibc, libxrender-glibc"
+    },
+    {
+      "name": "libxdmcp-glibc",
+      "version": "1.1.5",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxdmcp-glibc/libxdmcp-glibc_1.1.5_aarch64.deb",
+      "size": 25556,
+      "sha256": "b07513746d141bb11ff2c5cd496c0131da3ddbdb24bf92d51635d6b3c93ad1fb",
+      "depends": ""
+    },
+    {
+      "name": "libxext-glibc",
+      "version": "1.3.6",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxext-glibc/libxext-glibc_1.3.6_aarch64.deb",
+      "size": 101604,
+      "sha256": "09a989f92535f27343bf9d8904bf43e7a8a7827f5ef910eed45d112ad5bf0590",
+      "depends": "libx11-glibc"
+    },
+    {
+      "name": "libxfixes-glibc",
+      "version": "6.0.1",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxfixes-glibc/libxfixes-glibc_6.0.1_aarch64.deb",
+      "size": 12832,
+      "sha256": "23fe7f6003d9607db6af5c31b995616270c319f2af11ddcd6292facd43b25b66",
+      "depends": "libx11-glibc"
+    },
+    {
+      "name": "libxi-glibc",
+      "version": "1.8.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxi-glibc/libxi-glibc_1.8.2_aarch64.deb",
+      "size": 147052,
+      "sha256": "716705064cc53d3237a377fe4b0620550ed9600417fca5574634e76e2381c295",
+      "depends": "libxext-glibc, libxfixes-glibc"
+    },
+    {
+      "name": "libxinerama-glibc",
+      "version": "1.1.5",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxinerama-glibc/libxinerama-glibc_1.1.5_aarch64.deb",
+      "size": 8572,
+      "sha256": "e849c9e0a6ea5f42d9cf3421aece4153cae17ed0c5d5df8ef7b9eee4d428db4d",
+      "depends": "libxext-glibc"
+    },
+    {
+      "name": "libxml2-glibc",
+      "version": "2.15.4",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxml2-glibc/libxml2-glibc_2.15.4_aarch64.deb",
+      "size": 526432,
+      "sha256": "0c7ee42ae3a190fbf15bc3760fbc5b0245577b2f08959908fc3817da4e670c8c",
+      "depends": "libicu-glibc, ncurses-glibc, readline-glibc, zlib-glibc, liblzma-glibc"
+    },
+    {
+      "name": "libxrandr-glibc",
+      "version": "1.5.4",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxrandr-glibc/libxrandr-glibc_1.5.4_aarch64.deb",
+      "size": 25140,
+      "sha256": "2e403fc0d8f319933866f63478148f436757c801c5162362d3aa6732d7a567b8",
+      "depends": "libx11-glibc, libxext-glibc, libxrender-glibc"
+    },
+    {
+      "name": "libxrender-glibc",
+      "version": "0.9.12",
+      "architecture": "aarch64",
+      "filename": "pool/stable/libx/libxrender-glibc/libxrender-glibc_0.9.12_aarch64.deb",
+      "size": 26984,
+      "sha256": "86b181007e83f8055f77b964aa77dce2fd48949c04b5d5f1f7be9f8c83cfab52",
+      "depends": "libx11-glibc"
+    },
+    {
+      "name": "linux-api-headers-glibc",
+      "version": "7.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/l/linux-api-headers-glibc/linux-api-headers-glibc_7.2_aarch64.deb",
+      "size": 1286052,
+      "sha256": "9fe9373211d1726f66cc239467d5e055ae4f8dd5ff090dc23fe00b40f9553ede",
+      "depends": ""
+    },
+    {
+      "name": "lld-glibc",
+      "version": "19.1.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/l/lld-glibc/lld-glibc_19.1.3_aarch64.deb",
+      "size": 1932276,
+      "sha256": "21f9427f686c08f63df45cb0add0f9296b0e45ad4d0915c43405adf77d6070e3",
+      "depends": "libllvm-glibc, gcc-libs-glibc, zlib-glibc, zstd-glibc"
+    },
+    {
+      "name": "ncurses-glibc",
+      "version": "6.6.20260725",
+      "architecture": "aarch64",
+      "filename": "pool/stable/n/ncurses-glibc/ncurses-glibc_6.6.20260725_aarch64.deb",
+      "size": 929032,
+      "sha256": "10c8512f58890522304ed7c912445757751ed41a99bd53f1fda74e5793b46ea4",
+      "depends": "gcc-libs-glibc"
+    },
+    {
+      "name": "openssl-glibc",
+      "version": "3.6.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/o/openssl-glibc/openssl-glibc_3.6.3_aarch64.deb",
+      "size": 5901952,
+      "sha256": "f8f1820101aa8e8ff8283ef85edb74290ec3f8b9c9cbbbb0c428de1e5eb379ed",
+      "depends": "ca-certificates-glibc, resolv-conf, zlib-glibc, gcc-libs-glibc"
+    },
+    {
+      "name": "p11-kit-glibc",
+      "version": "0.26.5",
+      "architecture": "aarch64",
+      "filename": "pool/stable/p/p11-kit-glibc/p11-kit-glibc_0.26.5_aarch64.deb",
+      "size": 4116284,
+      "sha256": "c30b40ad7a82316f936286d9a98c3d3e583ee0773d4c951388912a78f84b4d11",
+      "depends": "libffi-glibc, libtasn1-glibc"
+    },
+    {
+      "name": "readline-glibc",
+      "version": "8.3.3",
+      "architecture": "aarch64",
+      "filename": "pool/stable/r/readline-glibc/readline-glibc_8.3.3_aarch64.deb",
+      "size": 329472,
+      "sha256": "8c8a0d49c1a2e78a13e517fd58eaec3fffadd690f32f2d03c472de12d875cde1",
+      "depends": "ncurses-glibc"
+    },
+    {
+      "name": "xcb-proto-glibc",
+      "version": "1.17.0-1",
+      "architecture": "all",
+      "filename": "pool/stable/x/xcb-proto-glibc/xcb-proto-glibc_1.17.0-1_all.deb",
+      "size": 78564,
+      "sha256": "cc50349016d6a2a6e69542fbed6a4942f3747efd239fc44e4ab84ee23b30fb21",
+      "depends": ""
+    },
+    {
+      "name": "xorg-util-macros-glibc",
+      "version": "1.20.2",
+      "architecture": "all",
+      "filename": "pool/stable/x/xorg-util-macros-glibc/xorg-util-macros-glibc_1.20.2_all.deb",
+      "size": 22000,
+      "sha256": "88b5c1863a6af0b9b11a50b440cbed22dc8591c002a3ec5c6e2a227213cffb36",
+      "depends": ""
+    },
+    {
+      "name": "xorgproto-glibc",
+      "version": "2024.1",
+      "architecture": "all",
+      "filename": "pool/stable/x/xorgproto-glibc/xorgproto-glibc_2024.1_all.deb",
+      "size": 225488,
+      "sha256": "2dea9b8bc1ab8725d957b5557b567bba18bd99ce4a0419d9eff491c78fa121ab",
+      "depends": "xorg-util-macros-glibc"
+    },
+    {
+      "name": "zlib-glibc",
+      "version": "1.3.2",
+      "architecture": "aarch64",
+      "filename": "pool/stable/z/zlib-glibc/zlib-glibc_1.3.2_aarch64.deb",
+      "size": 77640,
+      "sha256": "825d36673420387a31683deb93529bd8cb8fbd6328f061a9a26f779e016aef17",
+      "depends": "glibc"
+    },
+    {
+      "name": "zstd-glibc",
+      "version": "1.5.7",
+      "architecture": "aarch64",
+      "filename": "pool/stable/z/zstd-glibc/zstd-glibc_1.5.7_aarch64.deb",
+      "size": 430356,
+      "sha256": "5829a6c2f6f191174b4ee23586e5d9b756c4b3cdf205ed9f826b79c0eb46d74e",
+      "depends": "liblzma-glibc, zlib-glibc, liblz4-glibc, gcc-libs-glibc"
+    }
+  ]
+}
