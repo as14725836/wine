@@ -171,10 +171,12 @@ DWORD           MMDRV_Message(LPWINE_MLD mld, UINT wMsg, DWORD_PTR dwParam1, DWO
 UINT		MMDRV_PhysicalFeatures(LPWINE_MLD mld, UINT uMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
 
 DWORD           MCI_SendCommand(UINT wDevID, UINT16 wMsg, DWORD_PTR dwParam1, DWORD_PTR dwParam2);
+void            MCI_CleanupTask(ULONG_PTR task);
 
 const char*     WINMM_ErrorToString(MMRESULT error);
 
 void		TIME_MMTimeStop(void);
+void            TIME_CleanupTask(DWORD task);
 
 MMRESULT WINMM_CheckCallback(DWORD_PTR dwCallback, DWORD fdwOpen, BOOL mixer);
 

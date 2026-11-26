@@ -94,6 +94,31 @@ static LPWINE_MCIDRIVER	MCI_GetDriver(UINT wDevID)
 }
 
 /**************************************************************************
+ *              MCI_CleanupTask                 [internal]
+ */
+void MCI_CleanupTask(ULONG_PTR task)
+{
+    WINE_MCIDRIVER *driver;
+    MCIDEVICEID previous = 0, id;
+
+    for (;;)
+    {
+        id = 0;
+        EnterCriticalSection(&WINMM_cs);
+        for (driver = MciDrivers; driver; driver = driver->lpNext)
+            if (driver->CreatorThread == task && driver->wDeviceID > previous &&
+                (!id || driver->wDeviceID < id))
+                id = driver->wDeviceID;
+        LeaveCriticalSection(&WINMM_cs);
+        if (!id) break;
+
+        /* Closing a driver can reenter winmm. Advance even if it cannot close. */
+        previous = id;
+        mciSendCommandW(id, MCI_CLOSE, 0, 0);
+    }
+}
+
+/**************************************************************************
  * 				MCI_GetDriverFromString		[internal]
  */
 static UINT MCI_GetDriverFromString(LPCWSTR lpstrName)

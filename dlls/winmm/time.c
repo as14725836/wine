@@ -41,6 +41,7 @@ typedef struct tagWINE_TIMERENTRY {
     UINT16                      wFlags;
     UINT16                      wTimerID;
     DWORD                       dwTriggerTime;
+    DWORD                       creator_thread;
 } WINE_TIMERENTRY, *LPWINE_TIMERENTRY;
 
 static WINE_TIMERENTRY timers[16];
@@ -271,6 +272,7 @@ MMRESULT WINAPI timeSetEvent(UINT wDelay, UINT wResol, LPTIMECALLBACK lpFunc,
     timers[i].lpFunc = lpFunc;
     timers[i].dwUser = dwUser;
     timers[i].wFlags = wFlags;
+    timers[i].creator_thread = GetCurrentThreadId();
     timers[i].wTimerID = new_id;
 
     TIME_MMTimeStart();
@@ -283,6 +285,25 @@ MMRESULT WINAPI timeSetEvent(UINT wDelay, UINT wResol, LPTIMECALLBACK lpFunc,
     TRACE("=> %u\n", new_id);
 
     return new_id;
+}
+
+/**************************************************************************
+ *              TIME_CleanupTask                [internal]
+ */
+void TIME_CleanupTask(DWORD task)
+{
+    UINT ids[ARRAY_SIZE(timers)], count = 0, i;
+
+    if (!task) return;
+
+    EnterCriticalSection(&WINMM_cs);
+    for (i = 0; i < ARRAY_SIZE(timers); ++i)
+        if (timers[i].wTimerID && timers[i].creator_thread == task)
+            ids[count++] = timers[i].wTimerID;
+    LeaveCriticalSection(&WINMM_cs);
+
+    /* timeKillEvent may wait for a synchronous callback to finish. */
+    for (i = 0; i < count; ++i) timeKillEvent(ids[i]);
 }
 
 /**************************************************************************

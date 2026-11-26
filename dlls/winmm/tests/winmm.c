@@ -20,6 +20,8 @@
 
 #include "windef.h"
 #include "winbase.h"
+#include "winuser.h"
+#include "mmsystem.h"
 #include "wine/test.h"
 
 static void test_WOW32ResolveMultiMediaHandle(void)
@@ -79,7 +81,168 @@ static void test_WOW32ResolveMultiMediaHandle(void)
     FreeLibrary(module);
 }
 
+struct wow_app_exit_thread
+{
+    HANDLE ready, done, event;
+    MMRESULT timers[3];
+};
+
+static MMRESULT create_wow_app_exit_timer(HANDLE event)
+{
+    MMRESULT timer;
+
+    timer = timeSetEvent(60000, 0, event, 0, TIME_PERIODIC | TIME_CALLBACK_EVENT_SET);
+    ok(!!timer, "Failed to create timer\n");
+    return timer;
+}
+
+static DWORD WINAPI wow_app_exit_thread(void *arg)
+{
+    struct wow_app_exit_thread *data = arg;
+    unsigned int i;
+
+    for (i = 0; i < ARRAY_SIZE(data->timers); ++i)
+        data->timers[i] = create_wow_app_exit_timer(data->event);
+    SetEvent(data->ready);
+    WaitForSingleObject(data->done, INFINITE);
+    return 0;
+}
+
+static MCIDEVICEID open_wow_app_exit_device(void)
+{
+    MCI_OPEN_PARMSA parms = {0};
+    MCIERROR err;
+
+    parms.lpstrDeviceType = "waveaudio";
+    parms.lpstrElementName = "";
+    err = mciSendCommandA(0, MCI_OPEN, MCI_OPEN_ELEMENT | MCI_OPEN_TYPE, (DWORD_PTR)&parms);
+    if (err)
+    {
+        win_skip("Cannot open a new waveaudio device, error %lu\n", err);
+        return 0;
+    }
+    ok((ULONG_PTR)mciGetCreatorTask(parms.wDeviceID) == GetCurrentThreadId(),
+            "Unexpected creator task %p\n", mciGetCreatorTask(parms.wDeviceID));
+    return parms.wDeviceID;
+}
+
+static void check_wow_app_exit_timer(MMRESULT *timer, MMRESULT expected)
+{
+    MMRESULT ret;
+
+    if (!*timer) return;
+    ret = timeKillEvent(*timer);
+    ok(ret == expected, "timeKillEvent(%u) returned %u, expected %u\n", *timer, ret, expected);
+    *timer = 0;
+}
+
+static void test_WOWAppExit(void)
+{
+    struct wow_app_exit_thread data = {0};
+    DWORD thread_id, current_id = GetCurrentThreadId(), unmatched;
+    HMODULE module = LoadLibraryA("winmm.dll");
+    void (WINAPI *app_exit)(ULONG_PTR);
+    MCIDEVICEID device = 0;
+    MMRESULT timer = 0;
+    HANDLE thread = NULL;
+    unsigned int i;
+    MCIERROR err;
+    DWORD ret;
+
+    ok(!!module, "Failed to load winmm.dll, error %lu\n", GetLastError());
+    if (!module) return;
+    app_exit = (void *)GetProcAddress(module, "WOWAppExit");
+#ifdef __i386__
+    ok(!!app_exit, "WOWAppExit export is missing\n");
+#endif
+    if (!app_exit)
+    {
+        win_skip("WOWAppExit is unavailable\n");
+        FreeLibrary(module);
+        return;
+    }
+
+    data.ready = CreateEventW(NULL, FALSE, FALSE, NULL);
+    data.done = CreateEventW(NULL, FALSE, FALSE, NULL);
+    data.event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ok(!!data.ready && !!data.done && !!data.event, "Failed to create events, error %lu\n", GetLastError());
+    if (!data.ready || !data.done || !data.event) goto done;
+    thread = CreateThread(NULL, 0, wow_app_exit_thread, &data, 0, &thread_id);
+    ok(!!thread, "Failed to create thread, error %lu\n", GetLastError());
+    if (!thread) goto done;
+    ret = WaitForSingleObject(data.ready, 10000);
+    ok(ret == WAIT_OBJECT_0, "Wait returned %#lx\n", ret);
+    if (ret != WAIT_OBJECT_0) goto done;
+
+    device = open_wow_app_exit_device();
+    timer = create_wow_app_exit_timer(data.event);
+    unmatched = current_id ^ 0x80000000;
+    if (!unmatched || unmatched == thread_id) unmatched ^= 0x40000000;
+    app_exit(unmatched);
+    app_exit(unmatched);
+    if (device)
+        ok((ULONG_PTR)mciGetCreatorTask(device) == current_id, "Unmatched task closed the MCI device\n");
+    check_wow_app_exit_timer(&timer, TIMERR_NOERROR);
+    check_wow_app_exit_timer(&data.timers[0], TIMERR_NOERROR);
+
+#ifdef _WIN64
+    /* MCI uses the full task value, but timer ownership uses only its low DWORD. */
+    timer = create_wow_app_exit_timer(data.event);
+    app_exit(((ULONG_PTR)1 << 32) | current_id);
+    if (device)
+        ok((ULONG_PTR)mciGetCreatorTask(device) == current_id, "High task bits were ignored for MCI\n");
+    check_wow_app_exit_timer(&timer, TIMERR_NOCANDO);
+#endif
+
+    timer = create_wow_app_exit_timer(data.event);
+    app_exit(current_id);
+    if (device)
+    {
+        ok(!mciGetCreatorTask(device), "Current task's MCI device is still open\n");
+        if (mciGetCreatorTask(device)) mciSendCommandA(device, MCI_CLOSE, MCI_WAIT, 0);
+        device = 0;
+    }
+    check_wow_app_exit_timer(&timer, TIMERR_NOCANDO);
+    app_exit(current_id);
+    check_wow_app_exit_timer(&data.timers[1], TIMERR_NOERROR);
+
+    /* Keep the worker alive: the main thread must be able to clean up its timers. */
+    app_exit(thread_id);
+    check_wow_app_exit_timer(&data.timers[2], TIMERR_NOCANDO);
+    app_exit(thread_id);
+
+    device = open_wow_app_exit_device();
+    timer = create_wow_app_exit_timer(data.event);
+    /* Task zero may also affect the timer thread, so do not create timers after this. */
+    app_exit(0);
+    app_exit(0);
+    if (device)
+        ok((ULONG_PTR)mciGetCreatorTask(device) == current_id, "Task zero closed the MCI device\n");
+    check_wow_app_exit_timer(&timer, TIMERR_NOERROR);
+
+done:
+    if (thread)
+    {
+        SetEvent(data.done);
+        WaitForSingleObject(thread, INFINITE);
+        CloseHandle(thread);
+    }
+    for (i = 0; i < ARRAY_SIZE(data.timers); ++i)
+        if (data.timers[i]) timeKillEvent(data.timers[i]);
+    if (timer) timeKillEvent(timer);
+    if (device)
+    {
+        err = mciSendCommandA(device, MCI_CLOSE, MCI_WAIT, 0);
+        ok(!err, "MCI_CLOSE failed, error %lu\n", err);
+    }
+    if (data.event) CloseHandle(data.event);
+    if (data.done) CloseHandle(data.done);
+    if (data.ready) CloseHandle(data.ready);
+    FreeLibrary(module);
+}
+
 START_TEST(winmm)
 {
     test_WOW32ResolveMultiMediaHandle();
+    test_WOWAppExit();
 }

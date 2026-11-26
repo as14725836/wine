@@ -194,7 +194,7 @@
 @ stdcall NotifyCallbackData(long long long long long)
 @ stdcall WOW32DriverCallback(long long long long long long long)
 @ stdcall -arch=i386 WOW32ResolveMultiMediaHandle(long long long ptr long ptr)
-# WOWAppExit
+@ stdcall WOWAppExit(ptr)
 # WinmmLogoff
 # WinmmLogon
 # mid32Message

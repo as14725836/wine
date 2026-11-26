@@ -205,6 +205,26 @@ BOOL WINAPI WOW32ResolveMultiMediaHandle(UINT type, UINT direction, WORD handle1
 }
 
 /**************************************************************************
+ *              WOWAppExit (WINMM.@)
+ */
+void WINAPI WOWAppExit(ULONG_PTR task)
+{
+    void (WINAPI *app_cleanup)(ULONG_PTR);
+    HMODULE module;
+
+    TRACE("%#Ix\n", task);
+
+    MCI_CleanupTask(task);
+    TIME_CleanupTask((DWORD)task);
+
+    if ((module = GetModuleHandleW(L"avicap32.dll")))
+    {
+        app_cleanup = (void (WINAPI *)(ULONG_PTR))GetProcAddress(module, "AppCleanup");
+        if (app_cleanup) app_cleanup(task);
+    }
+}
+
+/**************************************************************************
  * 				auxGetNumDevs		[WINMM.@]
  */
 UINT WINAPI auxGetNumDevs(void)
