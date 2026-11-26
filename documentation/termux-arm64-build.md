@@ -2,7 +2,7 @@
 
 首选入口是[手动 GitHub Actions 工作流](../.github/workflows/build-termux-arm64.yml)：在仓库的 ARM64 Linux runner 上，使用官方 Termux glibc 工具链构建 Wine 的 AArch64 Unix 与 ARM64 PE 部分。[监督脚本](../ci/build_arm64_termux.py) 负责完整构建、重试、日志、心跳、状态和暂存产物，需要 Python 3.9 或更新版本。目标是原生 ARM64，不依赖 Box64 或 ARM64EC。
 
-**按“不要在本地编译，在仓库编译构建”的要求，本地只做静态检查；远端工作流已通过依赖准备、工具链探针和配置并进入全量编译。DRM/LLVM 工具依赖已补齐，当前修复编译日志确认的 SQLite ARM64 Windows 内存屏障错误，尚无完整构建成功的 Wine 二进制包，也没有 Android/Termux 真机运行结果。后文设备构建命令仅作可选参考，`doctor` 会编译和运行小型探针。**
+**完整远端构建已成功：[Actions 第 7 次运行](https://github.com/as14725836/wine/actions/runs/45756054226)在 GitHub ARM64 Linux runner 上使用官方 Termux glibc 工具链完成全量编译、暂存安装、验证和打包。已生成完整 Wine 二进制包，未做 Android/Termux 真机运行验证。按“不要在本地编译，在仓库编译构建”的要求，本地仅做静态检查；后文设备构建命令仅作可选参考，`doctor` 会编译和运行小型探针。**
 
 ## 仓库端构建：GitHub Actions
 
@@ -33,7 +33,60 @@
 - 成功或失败均尝试上传 `wine-termux-arm64-diagnostics-<run_id>-<attempt>`：锁文件、基础设施提交号、bootstrap 日志、libxml2 兼容库的构建日志与哈希记录、工具链路径/加载器报告、监督日志、JSON 状态和构建指纹、源码差异、configure 日志等。若任务在更早阶段失败，相应文件可能尚未生成。
 - artifacts 保留 14 天；需要长期保存时应自行下载。日志和 JSON 中的 runner 临时路径只供诊断，不是手机安装路径。
 
-**在远端完整构建真正通过前，这仍是验证中的构建路线。通过后准确表述为：“使用官方 Termux glibc 工具链在 GitHub ARM64 Linux runner 完整构建；未做 Android/Termux 真机运行验证。”** ARM64 Linux runner 无法代替 Android 内核、权限、图形和音频服务验收。
+### 已成功的构建与下载
+
+[运行 #7](https://github.com/as14725836/wine/actions/runs/45756054226)于 2026-11-26 04:45 UTC 完成，结论为 `success`。构建基础设施提交是 `985c651ea8088e4c0f14356ed5c8d3848ffc6159`，Wine 源码是前述固定提交加五文件补丁。
+
+- [完整 Wine 产物](https://github.com/as14725836/wine/actions/runs/45756054226/artifacts/15087533558)：`wine-termux-arm64-45756054226-1`，内含 `.tar.gz` 和 `.sha256`。
+- [诊断产物](https://github.com/as14725836/wine/actions/runs/45756054226/artifacts/15087892458)：`wine-termux-arm64-diagnostics-45756054226-1`。
+- Wine 压缩包：`wine-arm64-termux-6f1e28b249b0-20261126-043705-8310-1.tar.gz`，178,476,734 字节（约 170.2 MiB）。
+- 压缩包 SHA256：`38421d4d65f5c4ac4a669b3ac868e085173d19b8608725bd3c3fd66f2e22d6a1`。
+- runner 实际执行暂存程序得到 `wine-11.0 (CachyOS)` 和 `Wine 11.0`。这些是版本检查，不是 Windows 应用运行测试。
+
+上述 artifacts 的到期时间是 **2026-12-10 04:44 UTC**；请在到期前登录 GitHub 下载并自行保存。GitHub 下载得到的是外层 ZIP，须先解出内部的 `.tar.gz` 和 `.sha256`，再按下节安装。ZIP 与内部压缩包的 SHA256 不同。
+
+下载后已独立核对压缩包 SHA256、归档路径和链接、全部 ELF/PE 文件头、核心运行库搜索路径及构建元数据：归档含 40 个 AArch64 ELF、780 个 ARM64 PE、50 个 NE 字体资源，以及 10 个 WinMD 元数据文件。后者是 WIDL 固定输出的 I386 PE32/CLI 元数据容器，不是 x86 可执行模块；仅对十个精确路径在核对零入口点、元数据流边界、零方法体 RVA、无原生互操作/数据表后单独接受，未放宽其他 PE 的 ARM64 要求。核心 loader/server 的 interpreter 均为 `/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`。这些本地检查没有执行归档中的二进制。
+
+使用官方 Termux glibc 工具链在 GitHub ARM64 Linux runner 完整构建已经通过；Android 内核、权限、图形和音频服务仍需真机验收。
+
+## 在 Termux 安装远端构建产物
+
+目标是标准包名的 AArch64 Termux，固定 glibc prefix 为 `/data/data/com.termux/files/usr/glibc`。其他包名、用户目录或 prefix 不可直接套用此产物。先启用官方 glibc 源，并安装对应运行库：
+
+```sh
+pkg install glibc-repo
+pkg update
+pkg install glibc-runner freetype-glibc fontconfig-glibc \
+  libx11-glibc libxext-glibc libxrender-glibc libxi-glibc \
+  libxrandr-glibc libxcursor-glibc libxinerama-glibc \
+  libxcomposite-glibc libxfixes-glibc libgnutls-glibc \
+  libjpeg-turbo-glibc libpng-glibc alsa-lib-glibc dbus-glibc \
+  libglvnd-glibc libdrm-glibc
+```
+
+归档只包含 Wine，不捆绑 glibc 依赖库或 CI 的 libxml2 编译器兼容库。CI 的精确依赖版本见[锁文件](../ci/termux-glibc-aarch64.lock.json)；设备源可能更新，上述安装命令不承诺与锁文件版本完全相同。
+
+在已经从 ZIP 解出 `.tar.gz` 和 `.sha256` 的目录执行以下命令。每步失败即停止；已有 Wine 安装时先自行备份并处理，命令拒绝覆盖现有目录：
+
+```sh
+(
+  set -eu
+  test "$PREFIX" = /data/data/com.termux/files/usr
+  ARCHIVE=wine-arm64-termux-6f1e28b249b0-20261126-043705-8310-1.tar.gz
+  sha256sum -c "$ARCHIVE.sha256"
+  DEST="$PREFIX/glibc/opt"
+  if [ -e "$DEST/wine-arm64" ] || [ -L "$DEST/wine-arm64" ]; then
+    echo "目标已存在，请先备份并处理：$DEST/wine-arm64" >&2
+    exit 1
+  fi
+  mkdir -p "$DEST"
+  tar -xzf "$ARCHIVE" -C "$DEST"
+  "$DEST/wine-arm64/bin/wine" --version
+  "$DEST/wine-arm64/bin/wineserver" --version
+)
+```
+
+安装位置为 `$PREFIX/glibc/opt/wine-arm64`。不要将 glibc 库目录全局写入 Termux 的 `LD_LIBRARY_PATH`；二进制已记录固定的 glibc loader 与运行库搜索路径。上面的版本检查不会初始化 WINEPREFIX。使用窗口程序还需要另行配置可用的 X11 服务和 `DISPLAY`；本次构建不包含图形服务部署或真机应用验收。
 
 ## 可选：在目标 Termux 设备构建
 
@@ -98,13 +151,14 @@ python3 "$TOOLKIT/ci/build_arm64_termux.py" supervise \
 
 每条命令成功后再执行下一条；`git rev-parse HEAD` 必须输出上面的完整 SHA。补丁应只应用一次；`git apply --check` 若失败就先停下检查源码版本或已有修改，不要强制覆盖。上游新克隆默认不会带这些本地补丁，因此仅运行不带 `--source` 的默认克隆流程不等价于本交付源码。
 
-随附补丁只涉及以下四个文件：
+随附补丁只涉及以下五个文件：
 
 - `dlls/mfplay/player.c`：移除错误添加的 `IMFPMediaPlayer::SetVideoWindow` 实现和虚表项，恢复与官方 39 槽接口一致的顺序。官方接口有 `GetVideoWindow`，没有 `SetVideoWindow`；后者属于其他接口。`include/mfplay.idl` 保持不变，不要给它添加该方法来绕过编译错误。
 - `include/wine/server_protocol.h`：按该提交的 `server/protocol.def` 重新生成，补齐对应 ESYNC 协议定义，协议版本从 935 更新到 936。
 - `dlls/icuin/icuin.spec` 与 `dlls/icuuc/icuuc.spec`：分别规范化 416 和 542 项转发导出的生成格式，保留名称、序号、顺序和转发目标；这不等于已证明 ICU 的 ARM64 运行时 ABI 兼容。
+- `libs/sqlite3/sqlite3.c`：让内存屏障分支识别 `__clang__`，在 ARM64 Windows PE 编译时使用 `__sync_synchronize()`，避免调用该架构头文件中未声明的 `_ReadWriteBarrier()`。
 
-补丁的生成文件已用对应生成器复现核对；`mfplay` 修正曾定位到实际编译报错，但停止后的完整构建没有继续完成。补丁适用性检查不代表整个 Wine 已构建或可在设备上运行。
+补丁的生成文件已用对应生成器复现核对；`mfplay` 修正曾定位到实际编译报错，并已在 GitHub Actions 的远端完整构建中通过。补丁适用性检查与远端 CI 成功都不代表已在实际设备上运行。
 
 可用 `python3 "$TOOLKIT/ci/build_arm64_termux.py" --help` 查看全部选项。默认 glibc prefix 是 `$PREFIX/glibc`（缺少 `PREFIX` 时脚本回退到 `/data/data/com.termux/files/usr/glibc`），默认最终运行时 prefix 是 `$PREFIX/glibc/opt/wine-arm64`。配置阶段会把 `--prefix` 与 `--exec-prefix` 都显式设为最终运行时 prefix，避免 Autoconf 默认的 Android 子目录改变可执行文件安装布局。`doctor` 会验证 AArch64 主机、工具、glibc loader、可执行的 glibc 探针和 ARM64 PE 编译探针，并写入 `doctor.json`。它不是完整 Wine 构建或图形能力测试。
 
@@ -184,7 +238,7 @@ tar -xzf "$ARCHIVE" -C "$DEST"
 
 脚本还保留 `--profile linux`，用于原生 AArch64 glibc Linux 的独立配置；本指南使用默认的 `termux` profile。Linux 上的检查也不能替代 Termux glibc、Android 内核和用户空间集成测试。本任务已按要求停止本地构建；`doctor`、configure、make、编译探针与 Wine 验证只在 GitHub runner 上运行。
 
-当前仓库包含构建脚本、说明和源码补丁，完整 Wine 二进制仍需远端构建通过后生成。36 项监督器行为测试曾在停止本地编译要求之前通过；此后本地只做 Python AST/帮助输出、Git 补丁、文件校验和与归档内容等不涉及编译的检查，没有重跑包含编译探针的测试，也没有实际 Termux 设备构建或运行结果。
+当前仓库包含构建脚本、说明和源码补丁；完整 Wine 二进制已由上述远端成功运行生成并上传。36 项监督器行为测试曾在停止本地编译要求之前通过；此后本地只做 Python AST/帮助输出、Git 补丁、文件校验和与归档内容等不涉及编译的检查，没有重跑包含编译探针的测试，也没有实际 Termux 设备构建或运行结果。
 
 接口依据：
 
