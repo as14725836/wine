@@ -1,7 +1,16 @@
 name: Termux glibc ARM64 full build
 
-# Manual only: this workflow neither publishes Releases nor moves tags.
+# A dedicated CI branch enables first runs before default-branch registration.
+# This workflow neither publishes Releases nor moves tags.
 on:
+  push:
+    branches: [ci/termux-arm64-full-build]
+    paths:
+      - '.github/workflows/build-termux-arm64.yml'
+      - 'ci/build_arm64_termux.py'
+      - 'ci/prepare_termux_glibc_ci.py'
+      - 'ci/termux-glibc-aarch64.lock.json'
+      - 'ci/patches/dwproton-arm64-prerequisites.patch'
   workflow_dispatch:
 
 permissions:

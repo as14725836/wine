@@ -15,9 +15,9 @@
 - [源码前置补丁](../ci/patches/dwproton-arm64-prerequisites.patch)。
 - 本指南。
 
-这些文件位于 `as14725836/wine` 的 `upgrade/dwproton-11.0-17` 分支。工作流定义必须先存在于仓库默认分支，GitHub 才能提供 `workflow_dispatch` 入口；当前默认分支为 `master`，仅将文件推送到本分支不会自动提供 **Run workflow**。待维护者将工作流定义加入默认分支后，在 **Actions → Termux glibc ARM64 full build → Run workflow** 中选择 `upgrade/dwproton-11.0-17` 并运行。推送构建文件本身不会启动任务。不要运行仓库原有会发布 Release 的工作流来代替它。
+基础构建文件位于 `as14725836/wine` 的 `upgrade/dwproton-11.0-17` 分支。当前默认分支 `master` 尚未注册此工作流，向升级分支直接调用 `workflow_dispatch` 已返回 404。执行分支 `ci/termux-arm64-full-build` 因此为此工作流增加了仅限自身分支、仅限构建文件变更的 `push` 触发器，用于首次构建及修复后重试，无需修改默认分支。仓库现有 WoW64/ARM64EC 的 push 分支过滤器均不匹配此执行分支。不要运行仓库原有会发布 Release 的工作流来代替它。
 
-新工作流仅手动触发，权限为 `contents: read`，不发布 Release、不改 tag。构建基础设施取自所选分支；Wine 源码另行 checkout 到固定的 `6f1e28b249b073e36b5f68eea42f2631163b091f`，核对 SHA 后应用随附四文件补丁。分开检出避免把基础设施分支的变动误当成固定 Wine 源码；补丁只应用在该 runner 的源码检出目录。
+待维护者将工作流定义加入默认分支后，也可在 **Actions → Termux glibc ARM64 full build → Run workflow** 中选择包含构建文件的分支手动运行。执行分支上的新工作流支持上述限定 push 和手动触发，权限为 `contents: read`，不发布 Release、不改 tag。构建基础设施取自所选分支；Wine 源码另行 checkout 到固定的 `6f1e28b249b073e36b5f68eea42f2631163b091f`，核对 SHA 后应用随附四文件补丁。分开检出避免把基础设施分支的变动误当成固定 Wine 源码；补丁只应用在该 runner 的源码检出目录。
 
 工作流使用 `ubuntu-24.04-arm`，最长 330 分钟，并发作业按分支排队，不自动取消正在运行的任务。它通过 Ubuntu apt 安装构建辅助工具，通过锁文件下载 72 个官方 Termux glibc AArch64/架构无关包（308,115,304 字节，约 308 MB），逐包核对大小、SHA256 和包元数据，然后解包到精确前缀 `/data/data/com.termux/files/usr/glibc`。这是真实的 Termux glibc 库和工具链，不是用 Ubuntu glibc 产物替代。准备器 `--install` 仅允许 GitHub-hosted Linux ARM64 环境，拒绝覆盖已有 Termux prefix；它不是给手机安装软件的脚本。锁文件固定内容，若源站移除旧版本归档会直接失败，不会静默升级或替换校验和。
 
