@@ -33,6 +33,18 @@
 - 成功或失败均尝试上传 `wine-termux-arm64-diagnostics-<run_id>-<attempt>`：锁文件、基础设施提交号、bootstrap 日志、libxml2 兼容库的构建日志与哈希记录、工具链路径/加载器报告、监督日志、JSON 状态和构建指纹、源码差异、configure 日志等。若任务在更早阶段失败，相应文件可能尚未生成。
 - artifacts 保留 14 天；需要长期保存时应自行下载。日志和 JSON 中的 runner 临时路径只供诊断，不是手机安装路径。
 
+### 独立 ARM64EC 构建工作流
+
+[ARM64EC 工作流](../.github/workflows/build-termux-arm64ec.yml) 是与上面的原生 ARM64 构建分开的入口，不会替代或覆盖原生 ARM64 流程。它使用独立并发组和 runner 工作目录 `wine-termux-arm64ec-work`，并支持手动触发；在 `ci/termux-arm64-full-build` 分支上，只有 ARM64EC 工作流、监督脚本、PE 元数据验证器及其合成测试、Termux glibc 准备器、包锁文件或前置补丁变更时才由 `push` 触发。它只读仓库内容，不发布 Release 或改写 tag。
+
+该流程使用相同的固定 Wine 源码提交、源码前置补丁及锁定的 Termux glibc AArch64 包，并另行下载 LLVM-MinGW `20261117` 的 Ubuntu 22.04 ARM64 UCRT 归档，在解包前核对固定 SHA256。Unix `CC`/`CXX` 仍指向 glibc prefix 中的绝对 Termux clang 路径；LLVM-MinGW 根目录通过监督器参数传入，由监督器管理其交叉工具链选择，不应在工作流里硬设架构专用编译器。
+
+监督器默认 `--architecture native`；独立任务使用 `--architecture arm64ec --llvm-mingw-root <绝对工具链目录>`，配置为 `--enable-archs=aarch64,arm64ec,i386 --with-mingw=llvm-mingw`。两种模式必须使用独立工作目录；ARM64EC 的默认安装 prefix 为 `$PREFIX/glibc/opt/wine-arm64ec`。`doctor` 检查目标前缀驱动的默认 COFF/PE 架构，包含 configure 所需的 x86_64 辅助编译器，但最终 `PE_ARCHS` 只允许 aarch64、arm64ec、i386。双 DEF 探针使用 `llvm-dlltool -m arm64ec -d ec.def -N native.def`，并分别检查 native 与 EC archive map；普通 ARM64 对照探针不传 `-N`。
+
+安装验证额外检查 i386 ntdll 和 ARM64X ntdll 的 PE32+、非零 CHPEMetadataPointer、CHPE v2、含 ARM64/ARM64EC 条目的有界代码映射，以及带非空载荷的 ARM64X 动态重定位记录（Symbol 6）。验证结果写入 `pe-reports/installed-validation.json` 和归档内的 `hybrid-validation.json`；这些是结构检查，不执行动态重定位或 Windows 应用。合成测试 `python3 -B -m unittest discover -s ci -p test_arm64ec_pe.py -v` 只生成和解析测试字节，不调用编译器。
+
+该任务的产物架构标签为 `ARM64X+ARM64EC+i386`。FEX 不包含在构建中；这些 PE 架构标识不表示已能在 Android/Termux 上运行 x86 或 x64 Windows 应用，也不构成运行兼容性保证。即使构建、暂存验证及产物检查成功，仍未验证 Android/Termux 真机运行。成功任务上传 ARM64EC Wine 归档；成功或失败都尝试上传监督日志、状态、工具链和 PE 报告等诊断文件，保留 14 天。此 ARM64EC 入口没有在本指南中记录一次成功运行，也不能将原生 ARM64 的成功记录视为 ARM64EC 构建结果。
+
 ### 已成功的构建与下载
 
 [运行 #7](https://github.com/as14725836/wine/actions/runs/45756054226)于 2026-11-26 04:45 UTC 完成，结论为 `success`。构建基础设施提交是 `985c651ea8088e4c0f14356ed5c8d3848ffc6159`，Wine 源码是前述固定提交加五文件补丁。
@@ -210,7 +222,7 @@ python3 "$TOOLKIT/ci/build_arm64_termux.py" status --work-dir "$WORK"
 
 工作目录包含 `build/` 增量构建树、`build-config.json` 配置指纹、`configured.json`、`doctor.json`、`logs/`、每次尝试独立的 `staging/<run_id>/`，以及 `artifacts/`。若源码缺少 `configure`，脚本先运行 `autogen.sh`，再计算 `source_digest`。该摘要包含 `git diff --binary HEAD` 的完整 tracked 差异、标准 untracked 文件（排除 `__pycache__` 和监督锁），以及始终纳入的被 Git 忽略的 `configure`（含文件模式与内容）。指纹还记录源码路径及 SHA、configure 参数、profile、doctor 结果和一组影响构建的环境变量。源码、工具链探测结果、配置或受跟踪环境值不一致时构建会失败并保留旧工作目录；按错误提示使用新的 `--work-dir`，不要手工删改指纹来强行复用。
 
-成功归档名为 `artifacts/wine-arm64-<profile>-<sha12>-<run_id>.tar.gz`，旁边有 `.tar.gz.sha256` 校验文件。每次尝试安装到新的 staging 子目录，避免失败尝试留下的半成品混入归档；构建不会直接安装或覆盖活动 prefix。归档内部固定顶层目录名为 `wine-arm64/`，但二进制使用构建时设定的绝对 glibc loader/rpath，因此不能当作可随意搬移的目录。默认 prefix 的 basename 正好是 `wine-arm64`，可直接解到其父目录；自定义 `--prefix` 时，应先解到空临时目录，再把临时目录下 `wine-arm64/` 的内容部署到**确切的原配置 prefix**：
+原生模式成功归档名为 `artifacts/wine-arm64-<profile>-<sha12>-<run_id>.tar.gz`、顶层目录为 `wine-arm64/`；ARM64EC 模式分别使用 `wine-arm64ec-<profile>-<sha12>-<run_id>.tar.gz` 和 `wine-arm64ec/`。旁边均有 `.tar.gz.sha256` 校验文件。每次尝试安装到新的 staging 子目录，避免失败尝试留下的半成品混入归档；构建不会直接安装或覆盖活动 prefix。二进制使用构建时设定的绝对 glibc loader/rpath，因此不能当作可随意搬移的目录。默认 prefix 的 basename 与对应归档顶层目录相同，可直接解到其父目录；自定义 `--prefix` 时，应先解到空临时目录，再把对应顶层目录的内容部署到**确切的原配置 prefix**。以下是原生模式示例：
 
 ```sh
 ART="$HOME/wine-arm64-build/artifacts"
@@ -221,7 +233,7 @@ mkdir -p "$DEST"
 tar -xzf "$ARCHIVE" -C "$DEST"
 ```
 
-上述默认 prefix 解包后应得到 `$PREFIX/glibc/opt/wine-arm64/`。如果构建时通过 `--prefix` 设了其他绝对路径，归档中的固定 basename 仍是 `wine-arm64`，所以不要直接解到自定义 prefix 的父目录来推断部署位置；部署前自行确认目标目录不会覆盖现有文件。
+上述原生模式默认 prefix 解包后应得到 `$PREFIX/glibc/opt/wine-arm64/`；ARM64EC 归档对应 `$PREFIX/glibc/opt/wine-arm64ec/`，两者可分别安装。如果构建时通过 `--prefix` 设了其他绝对路径，归档顶层目录仍按架构模式固定，所以不要直接解到自定义 prefix 的父目录来推断部署位置；部署前自行确认目标目录不会覆盖现有文件。
 
 构建验证检查若干 ELF/PE 文件架构、loader、依赖记录，并运行暂存的 `wine --version` 与 `wineserver --version`；不会初始化 WINEPREFIX。**本任务没有在实际 Termux 设备上完成构建实测**。这些检查不证明 Wine GUI、Wayland/X11、图形驱动、音频/多媒体设备或任意 Windows 程序可用；不能据此承诺图形或驱动兼容性。
 

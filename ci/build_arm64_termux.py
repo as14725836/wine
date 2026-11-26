@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and supervise native ARM64 Wine for Termux glibc (Python 3.9+)."""
+"""Build and supervise ARM64 or ARM64EC Wine for Termux glibc (Python 3.9+)."""
 import argparse
 import fcntl
 import hashlib
@@ -17,6 +17,8 @@ import sys
 import tarfile
 import time
 
+from arm64ec_pe import verify_hybrid_pe
+
 URL = "https://github.com/as14725836/wine.git"
 BRANCH = "upgrade/dwproton-11.0-17"
 ENV_KEYS = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CROSSCFLAGS",
@@ -24,7 +26,20 @@ ENV_KEYS = ("CC", "CXX", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "CROSSCFLA
             "PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "PKG_CONFIG_SYSROOT_DIR",
             "BISON_PKGDATADIR", "M4", "AUTOCONF", "AUTOHEADER", "AUTOM4TE",
             "AUTOM4TE_CFG", "ACLOCAL_PATH", "AC_MACRODIR", "autom4te_perllibdir", "trailer_m4",
-            "aarch64_CC")
+            "architecture", "LLVM_MINGW_ROOT", "LLVM_MINGW_VERSION", "LLVM_MINGW_DIGEST",
+            "aarch64_CC", "arm64ec_CC", "i386_CC", "x86_64_CC")
+
+# Linked ARM64EC images use AMD64 in the PE COFF header; ARM64EC is the
+# object-file machine marker. Keep those expectations separate.
+PE_MACHINES = {"aarch64": (0xaa64, "ARM64"), "arm64ec": (0x8664, "AMD64/ARM64EC"),
+               "i386": (0x014c, "I386"), "x86_64": (0x8664, "AMD64"),
+               "arm64x": (0xaa64, "ARM64/ARM64X")}
+PE_OBJECT_MACHINES = {"aarch64": 0xaa64, "arm64ec": 0xa641, "i386": 0x014c,
+                      "x86_64": 0x8664}
+PE_COMPILER_ALIASES = {"aarch64": ("aarch64-w64-mingw32-clang",),
+                       "arm64ec": ("arm64ec-w64-mingw32-clang",),
+                       "i386": ("i386-w64-mingw32-clang", "i686-w64-mingw32-clang"),
+                       "x86_64": ("x86_64-w64-mingw32-clang",)}
 
 
 def atomic_json(path, data):
@@ -52,24 +67,46 @@ def elf_info(path):
     return {"machine": "AArch64", "interpreter": interpreter}
 
 
-def verify_pe(path):
+def verify_coff_object(path, target):
+    data = Path(path).read_bytes()
+    if len(data) < 20:
+        raise RuntimeError(f"Truncated COFF object: {path}")
+    machine = struct.unpack_from("<H", data)[0]
+    expected = PE_OBJECT_MACHINES[target]
+    if machine != expected:
+        raise RuntimeError(f"Expected {target} COFF machine 0x{expected:04x}, "
+                           f"got 0x{machine:04x}: {path}")
+    return {"machine_id": f"0x{machine:04x}"}
+
+
+def verify_pe(path, expected_machine=None):
     data = Path(path).read_bytes()
     if data[:2] != b"MZ":
         raise RuntimeError(f"Expected PE executable: {path}")
     off = struct.unpack_from("<I", data, 60)[0]
-    if data[off:off + 4] != b"PE\0\0" or struct.unpack_from("<H", data, off + 4)[0] != 0xaa64:
-        raise RuntimeError(f"Expected ARM64 PE (0xaa64): {path}")
-    return {"machine": "ARM64", "machine_id": "0xaa64"}
+    if data[off:off + 4] != b"PE\0\0":
+        raise RuntimeError(f"Expected PE executable: {path}")
+    machine_id = struct.unpack_from("<H", data, off + 4)[0]
+    if expected_machine is None:
+        expected_machine = "aarch64"
+    expected_id, expected_name = PE_MACHINES[expected_machine] if isinstance(expected_machine, str) else expected_machine
+    if machine_id != expected_id:
+        raise RuntimeError(f"Expected {expected_name} PE (0x{expected_id:04x}), "
+                           f"got 0x{machine_id:04x}: {path}")
+    return {"machine": expected_name, "machine_id": f"0x{machine_id:04x}"}
 
 
 class Supervisor:
     def __init__(self, args):
         self.args = args
+        self.architecture = args.architecture
         self.work = args.work_dir.expanduser().resolve()
         self.work.mkdir(parents=True, exist_ok=True)
         self.stop = False
-        self.state = {"pid": os.getpid(), "started": time.time(), "profile": args.profile}
+        self.state = {"pid": os.getpid(), "started": time.time(), "profile": args.profile,
+                      "architecture": self.architecture}
         self.env = os.environ.copy()
+        self.pe_compilers = {}
         gp = args.glibc_prefix.expanduser().resolve()
         self.env.setdefault("CC", str(gp / "bin/clang") if args.profile == "termux" else "clang")
         self.env.setdefault("CXX", str(gp / "bin/clang++") if args.profile == "termux" else "clang++")
@@ -87,12 +124,57 @@ class Supervisor:
             ldflags += [f"-Wl,--dynamic-linker={gp}/lib/ld-linux-aarch64.so.1",
                         f"-Wl,-rpath,{gp}/lib"]
             self.env["LDFLAGS"] = shlex.join(ldflags)
+        if self.architecture == "arm64ec":
+            self._setup_arm64ec_environment(gp)
         self._relocate_autoconf_config()
         self.log = None
         self.phase = "starting"
         self.last_output = time.time()
         signal.signal(signal.SIGINT, self.interrupt)
         signal.signal(signal.SIGTERM, self.interrupt)
+
+    def _setup_arm64ec_environment(self, glibc_prefix):
+        root_arg = self.args.llvm_mingw_root
+        if root_arg is None or not root_arg.expanduser().is_absolute():
+            raise RuntimeError("ARM64EC mode requires an absolute --llvm-mingw-root")
+        root = root_arg.expanduser().resolve()
+        self.llvm_mingw_root = root
+        bindir = root / "bin"
+        if not bindir.is_dir():
+            raise RuntimeError(f"LLVM-MinGW bin directory does not exist: {bindir}")
+        original_path = self.env.get("PATH", "")
+        for target in ("aarch64", "arm64ec", "i386", "x86_64"):
+            candidates = [bindir / name for name in PE_COMPILER_ALIASES[target]]
+            compiler = next((path for path in candidates
+                             if path.is_file() and os.access(path, os.X_OK)), None)
+            if compiler is None:
+                names = ", ".join(PE_COMPILER_ALIASES[target])
+                raise RuntimeError(f"Missing LLVM-MinGW {target} compiler in {bindir} (tried {names})")
+            # Keep the target-prefixed spelling; clang uses argv[0] to select its driver target.
+            compiler = compiler.absolute()
+            self.pe_compilers[target] = str(compiler)
+            self.env[f"{target}_CC"] = str(compiler)
+
+        # Unix tools must remain native glibc clang, not an LLVM-MinGW PE driver.
+        if self.args.profile == "termux":
+            unix_cc = glibc_prefix / "bin/clang"
+            unix_cxx = glibc_prefix / "bin/clang++"
+        else:
+            unix_cc = Path(shutil.which("clang", path=original_path) or "")
+            unix_cxx = Path(shutil.which("clang++", path=original_path) or "")
+        if not unix_cc.is_file() or not unix_cxx.is_file():
+            raise RuntimeError(f"ARM64EC mode requires native glibc clang and clang++: {unix_cc}, {unix_cxx}")
+        # Preserve clang++ driver mode and Termux's driver-name configuration.
+        self.env["CC"] = str(unix_cc.absolute())
+        self.env["CXX"] = str(unix_cxx.absolute())
+        path_parts = [str(bindir)]
+        glibc_bin = glibc_prefix / "bin"
+        if glibc_bin.is_dir():
+            path_parts.append(str(glibc_bin))
+        if original_path:
+            path_parts.append(original_path)
+        self.env["PATH"] = os.pathsep.join(path_parts)
+        self.env["LLVM_MINGW_ROOT"] = str(root)
 
     def _relocate_autoconf_config(self):
         macrodir = self.env.get("AC_MACRODIR") or self.env.get("autom4te_perllibdir")
@@ -242,15 +324,76 @@ class Supervisor:
             if interpreter != expected:
                 raise RuntimeError(f"Expected Termux glibc interpreter {expected}, got {interpreter}")
         version = self.run([probe / "glibc"], phase="probe-glibc-runtime", timeout=30)
+        compiler = self.run(shlex.split(self.env["CC"]) + ["--version"], phase="compiler-version")
         pe = probe / "pe.c"
         pe.write_text("void mainCRTStartup(void) {}\n")
-        pe_cmd = shlex.split(self.env.get("aarch64_CC", "clang"))
-        self.run(pe_cmd + ["--no-default-config", "-target", "aarch64-windows", "-fuse-ld=lld",
-                          "-nostdlib", str(pe), "-Wl,-entry:mainCRTStartup", "-Wl,-subsystem:console",
-                          "-o", str(probe / "pe.exe")], phase="probe-pe", timeout=60)
-        pe_info = verify_pe(probe / "pe.exe")
-        compiler = self.run(shlex.split(self.env["CC"]) + ["--version"], phase="compiler-version")
-        result = {"elf": info, "glibc_version": version, "pe": pe_info, "compiler": compiler}
+        if self.architecture == "arm64ec":
+            pe_reports = {}
+            compiler_versions = {}
+            reports = self.work / "pe-reports"
+            reports.mkdir(exist_ok=True)
+            tools = {name: self.llvm_mingw_root / "bin" / name
+                     for name in ("llvm-readobj", "llvm-dlltool", "llvm-nm")}
+            for name, path in tools.items():
+                if not path.is_file() or not os.access(path, os.X_OK):
+                    raise RuntimeError(f"Missing executable LLVM-MinGW {name}: {path}")
+            for target in ("aarch64", "arm64ec", "i386", "x86_64"):
+                pe_cmd = [self.pe_compilers[target]]
+                compiler_versions[target] = self.run(pe_cmd + ["--version"],
+                                                     phase=f"compiler-version-{target}", timeout=30)
+                obj = probe / f"pe-{target}.obj"
+                output = probe / f"pe-{target}.exe"
+                # Probe the actual prefixed driver's defaults, without forcing a target.
+                self.run(pe_cmd + ["-c", str(pe), "-o", str(obj)],
+                         phase=f"probe-coff-{target}", timeout=60)
+                object_info = verify_coff_object(obj, target)
+                self.run(pe_cmd + ["-fuse-ld=lld", "-nostdlib", str(obj),
+                                   "-Wl,-entry:mainCRTStartup", "-Wl,-subsystem:console",
+                                   "-o", str(output)], phase=f"probe-pe-{target}", timeout=60)
+                pe_reports[target] = {"object": object_info, "image": verify_pe(output, target)}
+                evidence = self.run([tools["llvm-readobj"], "--file-headers", "--coff-load-config", output],
+                                    phase=f"probe-pe-headers-{target}", timeout=30)
+                (reports / f"probe-{target}.txt").write_text(evidence + "\n")
+            ec_def, native_def = probe / "ec.def", probe / "native.def"
+            ec_def.write_text("LIBRARY test.dll\nEXPORTS\n    func\n")
+            native_def.write_text("LIBRARY test.dll\nEXPORTS\n    otherfunc\n")
+            archive = probe / "dual-def.lib"
+            self.run([tools["llvm-dlltool"], "-m", "arm64ec", "-d", ec_def,
+                      "-N", native_def, "-l", archive], phase="probe-dlltool-dual-def", timeout=30)
+            armap = self.run([tools["llvm-nm"], "--print-armap", archive],
+                             phase="probe-dlltool-armap", timeout=30)
+            (reports / "dual-def-armap.txt").write_text(armap + "\n")
+            maps = {"native": set(), "ec": set()}
+            current = None
+            for line in armap.splitlines():
+                if line.strip() == "Archive map":
+                    current = "native"
+                elif line.strip() == "Archive EC map":
+                    current = "ec"
+                elif not line.strip():
+                    current = None
+                elif current and " in " in line:
+                    maps[current].add(line.split(" in ", 1)[0].strip())
+            expected = {"native": {"__imp_otherfunc", "otherfunc"},
+                        "ec": {"#func", "__imp_aux_func", "__imp_func", "func"}}
+            for kind, symbols in expected.items():
+                if not symbols.issubset(maps[kind]) or symbols & maps["ec" if kind == "native" else "native"]:
+                    raise RuntimeError(f"Incorrect dual-DEF {kind} archive map: {sorted(maps[kind])}")
+            # Ordinary ARM64 import libraries must not receive ARM64EC-only -N.
+            self.run([tools["llvm-dlltool"], "-m", "arm64", "-d", native_def,
+                      "-l", probe / "native.lib"], phase="probe-dlltool-arm64", timeout=30)
+            result = {"architecture": self.architecture, "elf": info, "glibc_version": version,
+                      "pe": pe_reports, "compiler": compiler, "pe_compilers": compiler_versions,
+                      "llvm_mingw_root": str(self.llvm_mingw_root),
+                      "dual_def_maps": {kind: sorted(symbols) for kind, symbols in maps.items()}}
+        else:
+            pe_cmd = shlex.split(self.env.get("aarch64_CC", "clang"))
+            self.run(pe_cmd + ["--no-default-config", "-target", "aarch64-windows", "-fuse-ld=lld",
+                              "-nostdlib", str(pe), "-Wl,-entry:mainCRTStartup", "-Wl,-subsystem:console",
+                              "-o", str(probe / "pe.exe")], phase="probe-pe", timeout=60)
+            pe_info = verify_pe(probe / "pe.exe")
+            result = {"architecture": self.architecture, "elf": info, "glibc_version": version,
+                      "pe": pe_info, "compiler": compiler}
         atomic_json(self.work / "doctor.json", result)
         return result
 
@@ -313,18 +456,22 @@ class Supervisor:
         prefix = self.args.prefix
         if not prefix.is_absolute() or ".." in prefix.parts or prefix == Path("/"):
             raise RuntimeError("--prefix must be an absolute non-root path without '..'")
+        architectures = "aarch64,arm64ec,i386" if self.architecture == "arm64ec" else "aarch64"
         configure = [str(source / "configure"), "--enable-option-checking=fatal",
-                     f"--prefix={prefix}", f"--exec-prefix={prefix}", "--enable-archs=aarch64", "--disable-tests",
-                     "--disable-win16", "--without-oss"] + self.args.configure_arg
+                     f"--prefix={prefix}", f"--exec-prefix={prefix}", f"--enable-archs={architectures}",
+                     "--disable-tests", "--disable-win16", "--without-oss"]
+        if self.architecture == "arm64ec":
+            configure.append("--with-mingw=llvm-mingw")
         for arg in self.args.configure_arg:
             if arg.startswith(("--prefix", "--exec-prefix", "--bindir", "--libdir", "--enable-archs",
-                               "--host", "--build", "--without-mingw", "--disable-win64")):
-                raise RuntimeError(f"Option conflicts with native ARM64 layout: {arg}")
+                               "--host", "--build", "--with-mingw", "--without-mingw", "--disable-win64")):
+                raise RuntimeError(f"Option conflicts with {self.architecture} ARM64 layout: {arg}")
+        configure += self.args.configure_arg
         if not (source / "configure").is_file():
             self.run(["sh", "./autogen.sh"], source, "autogen")
         config = {"source": str(source), "commit": sha, "configure": configure,
                   "source_digest": self.source_fingerprint(source),
-                  "profile": self.args.profile, "doctor": doctor,
+                  "profile": self.args.profile, "architecture": self.architecture, "doctor": doctor,
                   "environment": {k: self.env[k] for k in ENV_KEYS if k in self.env}}
         fingerprint = self.work / "build-config.json"
         if fingerprint.exists():
@@ -342,8 +489,9 @@ class Supervisor:
         makefile = (build / "Makefile").read_text()
         archs = next((line.split("=", 1)[1].strip() for line in makefile.splitlines()
                       if line.startswith("PE_ARCHS =")), "")
-        if archs != "aarch64":
-            raise RuntimeError(f"Unexpected PE_ARCHS={archs!r}, expected only aarch64")
+        expected_archs = architectures.split(",")
+        if sorted(archs.split()) != sorted(expected_archs):
+            raise RuntimeError(f"Unexpected PE_ARCHS={archs!r}, expected {expected_archs}")
         self.run(["make", f"-j{self.args.jobs}", "--output-sync=target"], build, "make")
         # Per-attempt staging prevents stale files from a partial install entering the archive.
         stage = self.work / "staging" / self.run_id
@@ -352,18 +500,20 @@ class Supervisor:
         installed = stage / prefix.relative_to("/")
         report = self.verify(installed, doctor)
         report.update(commit=sha, source=str(source), prefix=str(prefix), profile=self.args.profile,
+                      architecture=self.architecture,
                       built_at=time.strftime("%Y-%m-%dT%H:%M:%S%z"),
                       configure=configure, runtime_dependencies="runtime-dependencies.txt")
         atomic_json(installed / "build-info.json", report)
         artifacts = self.work / "artifacts"
         artifacts.mkdir(exist_ok=True)
-        archive = artifacts / f"wine-arm64-{self.args.profile}-{sha[:12]}-{self.run_id}.tar.gz"
+        package = "wine-arm64ec" if self.architecture == "arm64ec" else "wine-arm64"
+        archive = artifacts / f"{package}-{self.args.profile}-{sha[:12]}-{self.run_id}.tar.gz"
         temporary = archive.with_suffix(".partial")
         self.phase = "archive"
         self.status("running")
         self.note(f"Packaging {installed} into {archive}")
         with tarfile.open(temporary, "w:gz", dereference=False) as out:
-            out.add(installed, arcname="wine-arm64", filter=self.tar_filter)
+            out.add(installed, arcname=package, filter=self.tar_filter)
         temporary.replace(archive)
         digest = hashlib.sha256()
         with archive.open("rb") as f:
@@ -384,12 +534,26 @@ class Supervisor:
         files = {"loader": installed / "bin/wine", "server": installed / "bin/wineserver",
                  "unix_ntdll": installed / "lib/wine/aarch64-unix/ntdll.so",
                  "pe_ntdll": installed / "lib/wine/aarch64-windows/ntdll.dll"}
+        if self.architecture == "arm64ec":
+            files["i386_ntdll"] = installed / "lib/wine/i386-windows/ntdll.dll"
         report = {"files": {}}
         for name, path in files.items():
-            info = verify_pe(path) if name == "pe_ntdll" else elf_info(path)
+            if name in ("pe_ntdll", "i386_ntdll"):
+                info = verify_pe(path, "i386" if name == "i386_ntdll" else "aarch64")
+            else:
+                info = elf_info(path)
             if name in ("loader", "server") and info["interpreter"] != doctor["elf"]["interpreter"]:
                 raise RuntimeError(f"Installed {name} interpreter differs from glibc probe")
             report["files"][name] = {"path": str(path.relative_to(installed)), **info}
+        if self.architecture == "arm64ec":
+            validation = verify_hybrid_pe(files["pe_ntdll"])
+            reports = self.work / "pe-reports"
+            reports.mkdir(exist_ok=True)
+            atomic_json(reports / "installed-validation.json", validation)
+            atomic_json(installed / "hybrid-validation.json", validation)
+            report["hybrid_validation"] = validation
+            if not validation["ok"]:
+                raise RuntimeError(f"Installed ARM64X ntdll validation failed: {validation['errors']}")
         dependencies = []
         for name in ("loader", "server", "unix_ntdll"):
             dependencies.append(self.run(["readelf", "-d", files[name]], phase="verify-dependencies"))
@@ -461,6 +625,10 @@ def main():
     parser.add_argument("--branch", default=BRANCH)
     parser.add_argument("--commit", help="require this full source HEAD SHA; no automatic checkout")
     parser.add_argument("--profile", choices=("termux", "linux"), default="termux")
+    parser.add_argument("--architecture", choices=("native", "arm64ec"), default="native",
+                        help="native ARM64 or ARM64X/ARM64EC with i386 WoW64")
+    parser.add_argument("--llvm-mingw-root", type=Path,
+                        help="absolute LLVM-MinGW root; required for arm64ec mode")
     gp = Path(os.environ.get("PREFIX", "/data/data/com.termux/files/usr")) / "glibc"
     parser.add_argument("--glibc-prefix", type=Path, default=gp)
     parser.add_argument("--prefix", type=Path, help="final runtime install path (staged, not installed live)")
@@ -472,7 +640,11 @@ def main():
     parser.add_argument("--configure-arg", action="append", default=[], help="repeat with =, e.g. --configure-arg=--without-wayland")
     args = parser.parse_args()
     args.attempts = args.attempts or (3 if args.command == "supervise" else 1)
-    args.prefix = args.prefix or (args.glibc_prefix / "opt/wine-arm64" if args.profile == "termux" else Path("/opt/wine-arm64"))
+    install_name = "wine-arm64ec" if args.architecture == "arm64ec" else "wine-arm64"
+    args.prefix = args.prefix or ((args.glibc_prefix / "opt" / install_name)
+                                  if args.profile == "termux" else Path("/opt") / install_name)
+    if args.architecture == "native" and args.llvm_mingw_root is not None:
+        parser.error("--llvm-mingw-root requires --architecture arm64ec")
     if args.idle_timeout < 0:
         parser.error("--idle-timeout must be >= 0")
     if args.command == "status":
