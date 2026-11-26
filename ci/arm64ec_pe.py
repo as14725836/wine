@@ -16,6 +16,7 @@ are bounded but are not applied or interpreted.  No subprocess, compiler,
 network access, external parser, or optional package is used.
 """
 
+from bisect import bisect_right
 import os
 from pathlib import Path
 import struct
@@ -77,6 +78,69 @@ class _PE:
                 return self.bounds(section["raw_offset"] + relative, size, label)
         raise _InvalidPE("{}: RVA is not mapped by a section".format(label))
 
+    @staticmethod
+    def section_evidence(section):
+        if section is None:
+            return None
+        return {key: section[key] for key in (
+            "index", "name", "rva", "virtual_size", "raw_size", "characteristics")}
+
+    def index_code_sections(self):
+        # Preserve self.sections in COFF order: DVRT section indices are one-based.
+        self.ordered_sections = sorted(
+            (section for section in self.sections if section["mapped_size"]),
+            key=lambda section: section["rva"])
+        self.section_starts = [section["rva"] for section in self.ordered_sections]
+        previous = None
+        run = 0
+        for section in self.ordered_sections:
+            executable = bool(section["characteristics"] & 0x20000000)
+            same_run = False
+            if executable and previous is not None:
+                end = previous["rva"] + previous["mapped_size"]
+                aligned_end = (end + self.section_alignment - 1) & ~(self.section_alignment - 1)
+                same_run = (bool(previous["characteristics"] & 0x20000000)
+                            and aligned_end <= _U32_END
+                            and section["rva"] == aligned_end)
+            if not same_run:
+                run += 1
+            section["code_run"] = run if executable else None
+            previous = section
+
+    def section_at(self, address):
+        index = bisect_right(self.section_starts, address) - 1
+        if index >= 0:
+            section = self.ordered_sections[index]
+            if address < section["rva"] + section["mapped_size"]:
+                return section
+        return None
+
+    def code_span(self, index, kind, start, length):
+        end = start + length
+        first = self.section_at(start)
+        last = self.section_at(end - 1) if length > 0 else None
+        failure = None
+        if kind >= len(_TYPE_NAMES):
+            failure = "unknown type 3"
+        elif length == 0:
+            failure = "zero length"
+        elif not (0 <= start < _U32_END and end <= _U32_END
+                  and end <= self.image_size):
+            failure = "invalid or overflowing RVA span"
+        elif first is None or last is None:
+            failure = "code range endpoint is outside a section body (header or padding)"
+        elif first["code_run"] is None or last["code_run"] is None:
+            failure = "code range endpoint is not in an executable section"
+        elif first["code_run"] != last["code_run"]:
+            failure = "code range crosses a nonexecutable section or noncanonical gap"
+        if failure is not None:
+            self.evidence["code_map"]["failed_entry"] = {
+                "index": index, "type": kind, "start_rva": start, "length": length,
+                "end_rva": end, "start_section": self.section_evidence(first),
+                "end_section": self.section_evidence(last), "failure": failure,
+            }
+            raise _InvalidPE("CodeMap entry {}: {}".format(index, failure))
+
     def va_rva(self, address, label):
         _require(address >= self.image_base and address - self.image_base < _U32_END,
                  "{}: VA is outside ImageBase-relative RVA space".format(label))
@@ -111,6 +175,8 @@ class _PE:
         _require(magic == _PE32_PLUS, "optional header must be PE32+ (0x20b)")
         self.checks["pe32_plus"] = True
         self.image_base, = self.unpack("<Q", optional + 24, "ImageBase")
+        self.section_alignment, self.file_alignment = self.unpack(
+            "<II", optional + 32, "SectionAlignment/FileAlignment")
         self.image_size, self.headers_size = self.unpack("<II", optional + 56,
                                                         "SizeOfImage/SizeOfHeaders")
         directory_count, = self.unpack("<I", optional + 108, "NumberOfRvaAndSizes")
@@ -136,13 +202,34 @@ class _PE:
             if mapped_size:
                 virtual_spans.append((rva, rva + mapped_size))
             name = self.data[offset:offset + 8].split(b"\0", 1)[0].decode("ascii", "replace")
+            characteristics, = self.unpack("<I", offset + 36, "section Characteristics")
             self.sections.append({"index": index + 1, "name": name, "rva": rva,
+                                  "virtual_size": virtual_size,
                                   "mapped_size": mapped_size, "raw_size": raw_size,
-                                  "raw_offset": raw_offset})
+                                  "raw_offset": raw_offset,
+                                  "characteristics": characteristics})
+        self.evidence.update({
+            "image_base": self.image_base, "image_size": self.image_size,
+            "section_count": section_count, "section_alignment": self.section_alignment,
+            "file_alignment": self.file_alignment,
+            "sections_sample": [self.section_evidence(section)
+                                for section in self.sections[:_SAMPLE_ENTRIES]],
+        })
         self.nonoverlap(raw_spans, "section/header file ranges")
         self.nonoverlap(virtual_spans, "section/header RVA ranges")
-        self.evidence.update({"image_base": self.image_base, "image_size": self.image_size,
-                              "section_count": section_count})
+        alignment = self.section_alignment
+        _require(alignment >= 4096 and alignment & (alignment - 1) == 0,
+                 "SectionAlignment must be a power of two >= 4096; low alignment is unsupported")
+        _require(512 <= self.file_alignment <= 65536
+                 and self.file_alignment & (self.file_alignment - 1) == 0
+                 and self.file_alignment <= alignment,
+                 "FileAlignment must be a power of two from 512 to 65536 and <= SectionAlignment")
+        _require(self.image_size > 0 and self.image_size % alignment == 0,
+                 "SizeOfImage must be aligned to SectionAlignment")
+        _require(all(section["rva"] % alignment == 0 for section in self.sections
+                     if section["mapped_size"]),
+                 "section RVA must be aligned to SectionAlignment")
+        self.index_code_sections()
         self.checks["pe_bounds"] = True
         _require(directory_count > 10, "load-config data directory is missing")
         config_rva, config_size = self.unpack("<II", optional + 112 + 10 * 8,
@@ -187,21 +274,19 @@ class _PE:
         map_offset = self.rva(code_map, count * 8, "CodeMap entries")
         type_counts = {name: 0 for name in _TYPE_NAMES}
         sample = []
+        self.evidence["code_map"] = {"rva": code_map, "file_offset": map_offset,
+                                      "count": count, "type_counts": type_counts,
+                                      "entries_sample": sample,
+                                      "entries_sample_truncated": count > _SAMPLE_ENTRIES}
         for index in range(count):
             tagged_start, length = self.unpack("<II", map_offset + index * 8, "CodeMap entry")
             kind = tagged_start & 3
             start_rva = tagged_start & ~3
-            _require(kind < len(_TYPE_NAMES), "CodeMap entry {} has unknown type 3".format(index))
-            _require(length > 0, "CodeMap entry {} has zero length".format(index))
-            self.rva(start_rva, length, "CodeMap entry {} code range".format(index))
+            self.code_span(index, kind, start_rva, length)
             type_counts[_TYPE_NAMES[kind]] += 1
             if len(sample) < _SAMPLE_ENTRIES:
                 sample.append({"index": index, "type": kind, "type_name": _TYPE_NAMES[kind],
                                "start_rva": start_rva, "length": length})
-        self.evidence["code_map"] = {"rva": code_map, "file_offset": map_offset,
-                                      "count": count, "type_counts": type_counts,
-                                      "entries_sample": sample,
-                                      "entries_sample_truncated": count > len(sample)}
         _require(type_counts["ARM64"] > 0, "CodeMap has no ARM64 (type 0) range")
         _require(type_counts["ARM64EC"] > 0, "CodeMap has no ARM64EC (type 1) range")
         self.checks["hybrid_code_map"] = True
@@ -280,8 +365,8 @@ def verify_hybrid_pe(path):
     """Return a JSON-compatible ARM64X structural-verification report.
 
     ``path`` accepts a string or text-valued ``os.PathLike``.  Success requires
-    ARM64 COFF, PE32+, valid file-backed PE ranges, CHPE metadata v2, positive
-    ARM64 and ARM64EC CodeMap ranges, and an entirely bounded DVRT (v1 or v2)
+    ARM64 COFF, PE32+, file-backed metadata, CHPE metadata v2, positive
+    ARM64 and ARM64EC CodeMap ranges inside executable runs, and a bounded DVRT (v1 or v2)
     containing an ARM64X Symbol 6 record with a nonempty fixup payload.  Either
     the one-based section/offset locator or the legacy VA locator is accepted.
     All records are checked, including records following the ARM64X one.

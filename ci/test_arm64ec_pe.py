@@ -81,6 +81,68 @@ def _image(version=1):
     return data
 
 
+_META_SECTION = (".meta", 0x1000, 0x1000, 0x1000, 0x40000040)
+_EXEC_A = (".codea", 0x2000, 0x650, 0x400, 0x60000020)
+_EXEC_B = (".codeb", 0x3000, 0x380, 0x200, 0x60000020)
+
+
+def _span_file_offset(data, rva):
+    """Locate fixture bytes without assuming section-table order or header size."""
+    count = struct.unpack_from("<H", data, _PE_OFFSET + 6)[0]
+    for index in range(count):
+        header = _SECTION_TABLE + index * 40
+        section_rva, raw_size, raw_offset = struct.unpack_from("<III", data, header + 12)
+        if section_rva <= rva < section_rva + raw_size:
+            return raw_offset + rva - section_rva
+    raise ValueError("fixture RVA is not file-backed: {:#x}".format(rva))
+
+
+def _span_image(sections=None, entries=None):
+    """Keep metadata file-backed in .meta; describe independent code bodies.
+
+    Section tuples are (name, RVA, VirtualSize, SizeOfRawData, Characteristics).
+    The input order is the original PE section order, including the DVRT index.
+    """
+    if sections is None:
+        sections = [_META_SECTION, _EXEC_A, _EXEC_B]
+    if entries is None:
+        entries = [(0x2100, 0x20), (0x2141, 0x20)]
+    source = _image()
+    headers_size = (_SECTION_TABLE + 40 * len(sections) + 0x1FF) & ~0x1FF
+    data = bytearray(headers_size + sum(section[3] for section in sections))
+    data[:_SECTION_TABLE] = source[:_SECTION_TABLE]
+    _put(data, "<H", _PE_OFFSET + 6, len(sections))
+    image_end = max(rva + max(virtual_size, raw_size)
+                    for _, rva, virtual_size, raw_size, _ in sections)
+    _put(data, "<II", _OPTIONAL + 56, (image_end + 0xFFF) & ~0xFFF, headers_size)
+    raw_offset = headers_size
+    metadata_index = None
+    for index, (name, rva, virtual_size, raw_size, flags) in enumerate(sections):
+        header = _SECTION_TABLE + index * 40
+        data[header:header + 8] = name.encode("ascii").ljust(8, b"\0")
+        _put(data, "<IIII", header + 8,
+             virtual_size, rva, raw_size, raw_offset if raw_size else 0)
+        _put(data, "<I", header + 36, flags)
+        # Reuse only source bytes actually present in this section's raw body.
+        copy_start = max(rva, _SECTION_RVA)
+        copy_end = min(rva + raw_size, _SECTION_RVA + _SECTION_SIZE)
+        if copy_start < copy_end:
+            target = raw_offset + copy_start - rva
+            data[target:target + copy_end - copy_start] = source[
+                _file_offset(copy_start):_file_offset(copy_end)]
+        if name == ".meta":
+            metadata_index = index + 1
+        raw_offset += raw_size
+    if metadata_index is None:
+        raise ValueError("fixture needs a .meta section")
+    _put(data, "<H", _span_file_offset(data, _CONFIG_RVA) + 0xE4, metadata_index)
+    _put(data, "<I", _span_file_offset(data, _METADATA_RVA) + 8, len(entries))
+    table = _span_file_offset(data, _MAP_RVA)
+    for index, (tagged_start, length) in enumerate(entries):
+        _put(data, "<II", table + index * 8, tagged_start, length)
+    return data
+
+
 class VerifyHybridPETests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -106,6 +168,31 @@ class VerifyHybridPETests(unittest.TestCase):
         self.assertTrue(report["errors"], report)
         self.assertIn(reason.lower(), " ".join(report["errors"]).lower())
         return report
+
+    def assert_failed_entry(self, report, index, tagged_start, length,
+                            start_section, end_section):
+        failed = report["evidence"]["code_map"]["failed_entry"]
+        self.assertEqual(set(failed), {"index", "type", "start_rva", "length",
+                                       "end_rva", "start_section", "end_section",
+                                       "failure"})
+        self.assertEqual(failed["index"], index)
+        self.assertEqual(failed["type"], tagged_start & 3)
+        self.assertEqual(failed["start_rva"], tagged_start & ~3)
+        self.assertEqual(failed["length"], length)
+        self.assertEqual(failed["end_rva"], (tagged_start & ~3) + length)
+        self.assertIsInstance(failed["failure"], str)
+        self.assertTrue(failed["failure"])
+        fields = {"index", "name", "rva", "virtual_size", "raw_size", "characteristics"}
+        for key, expected_index in (("start_section", start_section),
+                                    ("end_section", end_section)):
+            if expected_index is None:
+                self.assertIsNone(failed[key])
+            else:
+                self.assertIsInstance(failed[key], dict)
+                self.assertTrue(fields <= set(failed[key]))
+                self.assertIs(type(failed[key]["index"]), int)
+                self.assertEqual(failed[key]["index"], expected_index)
+        return failed
 
     def test_valid_v1_and_evidence(self):
         report = self.verify(_image())
@@ -262,19 +349,219 @@ class VerifyHybridPETests(unittest.TestCase):
 
     def test_positive_range_lengths_and_bounds(self):
         cases = [(0x1500, 0, "zero length"), (0x1500, 0xFFFFFFFF, "RVA span"),
-                 (0x1FF0, 0x20, "file-backed"), (0x2100, 4, "not mapped"),
-                 (0xFFFFFFFC, 8, "RVA span"), (0x3FC, 8, "header boundary")]
+                 (0x1FF0, 0x20, "CodeMap entry 0"), (0x2100, 4, "CodeMap entry 0"),
+                 (0xFFFFFFFC, 8, "RVA span"), (0x3FC, 8, "CodeMap entry 0")]
         for start, length, reason in cases:
             with self.subTest(start=start, length=length):
                 data = _image()
                 _put(data, "<II", _file_offset(_MAP_RVA), start, length)
                 self.assert_bad(data, reason)
 
-    def test_virtual_only_range_rejected(self):
+    def test_virtual_only_executable_range_accepted(self):
         data = _image()
         _put(data, "<I", _SECTION_TABLE + 8, 0x1800)
         _put(data, "<II", _file_offset(_MAP_RVA), 0x2200, 4)
-        self.assert_bad(data, "file-backed")
+        report = self.verify(data)
+        self.assertTrue(report["ok"], report)
+
+    def test_separate_nonexecutable_metadata_and_executable_code(self):
+        report = self.verify(_span_image())
+        self.assertTrue(report["ok"], report)
+        self.assertTrue(all(report["checks"].values()))
+
+    def test_executable_spans_join_adjacent_bodies_across_canonical_padding(self):
+        # A ends at 0x2650, its alignment padding ends where B begins: 0x3000.
+        for start, end in ((0x2100, 0x3250), (0x2500, 0x3004),
+                           (0x2000, 0x3380), (0x264C, 0x3001)):
+            with self.subTest(start=start, end=end):
+                report = self.verify(_span_image(entries=[
+                    (start, end - start), (0x2141, 4)]))
+                self.assertTrue(report["ok"], report)
+
+    def test_executable_span_exactly_adjacent_without_padding(self):
+        section = (".full", 0x2000, 0x1000, 0x200, 0x60000020)
+        report = self.verify(_span_image(
+            sections=[_META_SECTION, section, _EXEC_B],
+            entries=[(0x2FFC, 8), (0x2141, 4)]))
+        self.assertTrue(report["ok"], report)
+
+    def test_executable_virtual_tail_is_part_of_body(self):
+        # A's raw data ends at 0x2400, but VirtualSize extends to 0x2650.
+        for start, length in ((0x23FC, 8), (0x2400, 4), (0x2500, 0x150)):
+            with self.subTest(start=start, length=length):
+                report = self.verify(_span_image(entries=[
+                    (start, length), (0x2141, 4)]))
+                self.assertTrue(report["ok"], report)
+
+    def test_executable_body_uses_maximum_of_virtual_and_raw_sizes(self):
+        for virtual_size in (0, 0x100):
+            with self.subTest(virtual_size=virtual_size):
+                section = (".raw", 0x2000, virtual_size, 0x400, 0x60000020)
+                report = self.verify(_span_image(
+                    sections=[_META_SECTION, section, _EXEC_B],
+                    entries=[(0x2300, 0x100), (0x2105, 1)]))
+                self.assertTrue(report["ok"], report)
+
+    def test_zero_raw_executable_body_and_spans_entering_and_leaving_it(self):
+        sections = [_META_SECTION, _EXEC_A,
+                    (".zero", 0x3000, 0x180, 0, 0x60000020),
+                    (".last", 0x4000, 0x200, 0x200, 0x60000020)]
+        entries = [(0x3000, 0x180), (0x2501, 0xB04),
+                   (0x3100, 0xF04), (0x2501, 0x1C04)]
+        report = self.verify(_span_image(sections=sections, entries=entries))
+        self.assertTrue(report["ok"], report)
+
+    def test_empty_nonexecutable_section_does_not_split_executable_run(self):
+        sections = [_META_SECTION, _EXEC_A,
+                    (".empty", 0x3000, 0, 0, 0x40000040), _EXEC_B]
+        report = self.verify(_span_image(sections=sections, entries=[
+            (0x2500, 0xB04), (0x2141, 4)]))
+        self.assertTrue(report["ok"], report)
+
+    def test_nonpage_aligned_overlapping_and_unsorted_code_map_ranges(self):
+        entries = [(0x2201, 0x100), (0x2100, 0x180),
+                   (0x2142, 0x21), (0x2105, 1)]
+        report = self.verify(_span_image(entries=entries))
+        self.assertTrue(report["ok"], report)
+        sample = report["evidence"]["code_map"]["entries_sample"]
+        self.assertEqual([item["start_rva"] for item in sample],
+                         [start & ~3 for start, _ in entries])
+        self.assertEqual([item["length"] for item in sample],
+                         [length for _, length in entries])
+
+    def test_unsorted_sections_preserve_original_one_based_dvrt_index(self):
+        sections = [_EXEC_B, _META_SECTION, _EXEC_A]
+        data = _span_image(sections=sections, entries=[
+            (0x2500, 0xB04), (0x2141, 4)])
+        report = self.verify(data)
+        self.assertTrue(report["ok"], report)
+        self.assertEqual(report["evidence"]["dynamic_relocations"]["locator"],
+                         "section_offset")
+        # .meta is originally section 2, although it sorts first by RVA.
+        _put(data, "<H", _span_file_offset(data, _CONFIG_RVA) + 0xE4, 1)
+        self.assert_bad(data, "raw data")
+
+    def test_code_spans_reject_headers_and_nonexecutable_endpoints(self):
+        for start, length in ((0, 4), (0x200, 4), (0x3FC, 8),
+                              (0x1100, 4), (0x1100, 0x1004)):
+            with self.subTest(start=start, length=length):
+                data = _span_image(entries=[(start, length), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+        # The name .text cannot grant execution permission to a nonexec body.
+        sections = [_META_SECTION, _EXEC_A,
+                    (".text", 0x3000, 0x380, 0x200, 0x40000040)]
+        data = _span_image(sections=sections, entries=[
+            (0x2100, 0x1004), (0x2141, 4)])
+        self.assert_bad(data, "CodeMap entry 0")
+
+    def test_code_spans_reject_nonexecutable_intermediate_section(self):
+        for raw_size in (0, 0x200):
+            with self.subTest(raw_size=raw_size):
+                sections = [_META_SECTION, _EXEC_A,
+                            (".data", 0x3000, 0x380, raw_size, 0x40000040),
+                            (".last", 0x4000, 0x380, 0x200, 0x60000020)]
+                data = _span_image(sections=sections, entries=[
+                    (0x2100, 0x2004), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+
+    def test_code_spans_reject_arbitrary_holes_between_executable_sections(self):
+        sections = [_META_SECTION, _EXEC_A,
+                    (".far", 0x4000, 0x380, 0x200, 0x60000020)]
+        for start, end in ((0x2100, 0x4104), (0x3000, 0x4104)):
+            with self.subTest(start=start, end=end):
+                data = _span_image(sections=sections, entries=[
+                    (start, end - start), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+
+    def test_code_spans_cannot_start_or_end_in_internal_padding(self):
+        for start, end in ((0x2800, 0x3100), (0x2650, 0x3004),
+                           (0x2500, 0x2651), (0x2500, 0x3000),
+                           (0x2800, 0x2804)):
+            with self.subTest(start=start, end=end):
+                data = _span_image(entries=[(start, end - start), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+
+    def test_code_spans_cannot_end_in_final_alignment_tail(self):
+        for start, end in ((0x3300, 0x3381), (0x3300, 0x4000),
+                           (0x3380, 0x3384), (0x3800, 0x3804)):
+            with self.subTest(start=start, end=end):
+                data = _span_image(entries=[(start, end - start), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+
+    def test_code_span_size_of_image_and_32_bit_sum_boundaries(self):
+        sections = [_META_SECTION, _EXEC_A,
+                    (".last", 0x3000, 0x1000, 0x200, 0x60000020)]
+        report = self.verify(_span_image(sections=sections, entries=[
+            (0x3FFC, 4), (0x2141, 4)]))
+        self.assertTrue(report["ok"], report)
+        for start, length in ((0x3FFC, 5), (0x4000, 4),
+                              (0xFFFFFFFC, 4), (0xFFFFFFFC, 8),
+                              (0x2100, 0xFFFFFFFF), (0x2100, 0)):
+            with self.subTest(start=start, length=length):
+                data = _span_image(sections=sections, entries=[
+                    (start, length), (0x2141, 4)])
+                self.assert_bad(data, "CodeMap entry 0")
+
+    def test_section_alignment_must_be_supported_power_of_two(self):
+        for alignment in (0, 1, 0x200, 0x800, 0xC00, 0x1800, 0x3000, 0xFFFFFFFF):
+            with self.subTest(alignment=alignment):
+                data = _image()
+                _put(data, "<I", _OPTIONAL + 32, alignment)
+                self.assert_bad(data, "SectionAlignment")
+
+    def test_metadata_structures_still_require_file_backing(self):
+        sections = [(".meta", 0x1000, 0x1000, 0xA00, 0x40000040),
+                    _EXEC_A, _EXEC_B]
+        for structure in ("load-config", "CHPE", "CodeMap", "DVRT"):
+            with self.subTest(structure=structure):
+                data = _span_image(sections=sections)
+                config = _span_file_offset(data, _CONFIG_RVA)
+                if structure == "load-config":
+                    _put(data, "<II", _OPTIONAL + 112 + 10 * 8, 0x1C00, 0xF8)
+                elif structure == "CHPE":
+                    _put(data, "<Q", config + 0xC8, _IMAGE_BASE + 0x1C00)
+                elif structure == "CodeMap":
+                    _put(data, "<II", _span_file_offset(data, _METADATA_RVA) + 4,
+                         0x1C00, 2)
+                else:
+                    _put(data, "<Q", config + 0xC0, _IMAGE_BASE + 0x1C00)
+                    _put(data, "<IH", config + 0xE0, 0, 0)
+                self.assert_bad(data, "file-backed")
+        data = _span_image(sections=sections)
+        _put(data, "<I", _span_file_offset(data, _CONFIG_RVA) + 0xE0, 0xC00)
+        self.assert_bad(data, "raw data")
+
+    def test_metadata_structures_cannot_span_adjacent_file_backed_sections(self):
+        for structure in ("load-config", "CHPE", "CodeMap"):
+            with self.subTest(structure=structure):
+                data = _span_image()
+                if structure == "load-config":
+                    _put(data, "<II", _OPTIONAL + 112 + 10 * 8, 0x1FF0, 0xF8)
+                elif structure == "CHPE":
+                    _put(data, "<Q", _span_file_offset(data, _CONFIG_RVA) + 0xC8,
+                         _IMAGE_BASE + 0x1FFC)
+                else:
+                    _put(data, "<II", _span_file_offset(data, _METADATA_RVA) + 4,
+                         0x1FF8, 2)
+                self.assert_bad(data, "file-backed")
+
+    def test_dvrt_header_and_body_cannot_span_adjacent_file_backed_sections(self):
+        for locator in ("va", "section_offset"):
+            for table_rva in (0x1FFC, 0x1FF0):
+                with self.subTest(locator=locator, table_rva=table_rva):
+                    data = _span_image()
+                    config = _span_file_offset(data, _CONFIG_RVA)
+                    if locator == "va":
+                        _put(data, "<Q", config + 0xC0, _IMAGE_BASE + table_rva)
+                        _put(data, "<IH", config + 0xE0, 0, 0)
+                    else:
+                        _put(data, "<I", config + 0xE0, table_rva - 0x1000)
+                    table = _span_file_offset(data, table_rva)
+                    record = _record()
+                    _put(data, "<II", table, 1, len(record))
+                    data[table + 8:table + 8 + len(record)] = record
+                    reason = "raw data" if locator == "section_offset" and table_rva == 0x1FFC else "file-backed"
+                    self.assert_bad(data, reason)
 
     def test_valid_x64_additional_range(self):
         data = _image()
@@ -348,6 +635,49 @@ class VerifyHybridPETests(unittest.TestCase):
         data = _image(2)
         _put(data, "<I", table + 4, 23)
         self.assert_bad(data, "v2 record")
+
+    def test_failed_span_evidence_has_original_section_indices(self):
+        sections = [_EXEC_B, _META_SECTION, _EXEC_A]
+        for start, end, start_section, end_section in (
+                (0x200, 0x204, None, None),
+                (0x1100, 0x1104, 2, 2),
+                (0x2800, 0x3100, None, 1),
+                (0x2500, 0x2800, 3, None)):
+            with self.subTest(start=start, end=end):
+                report = self.assert_bad(_span_image(
+                    sections, [(start | 1, end - start), (0x2140, 4)]),
+                    "CodeMap entry 0")
+                self.assert_failed_entry(report, 0, start | 1, end - start,
+                                         start_section, end_section)
+        sections = [(".codeb", 0x4000, 0x380, 0x200, 0x60000020),
+                    _META_SECTION, _EXEC_A]
+        report = self.assert_bad(_span_image(
+            sections, [(0x2501, 0x1B04), (0x2140, 4)]), "CodeMap entry 0")
+        failed = self.assert_failed_entry(report, 0, 0x2501, 0x1B04, 3, 1)
+        self.assertEqual(failed["start_section"]["rva"], 0x2000)
+        self.assertEqual(failed["end_section"]["rva"], 0x4000)
+
+    def test_failed_entry_beyond_samples_retains_bounded_section_evidence(self):
+        sections = [_META_SECTION,
+                    (".c00", 0x2000, 0x400, 0x200, 0x60000020)]
+        sections.extend((".c{:02d}".format(index), (index + 3) * 0x1000,
+                         0x400, 0x200, 0x60000020) for index in range(1, 39))
+        entries = [(0x2100 | (index % 2), 4) for index in range(39)]
+        bad_length = sections[-1][1] + 4 - 0x2100
+        entries.append((0x2101, bad_length))
+        report = self.assert_bad(_span_image(sections, entries), "CodeMap entry 39")
+        code_map = report["evidence"]["code_map"]
+        self.assertEqual(code_map["count"], 40)
+        self.assertEqual(len(code_map["entries_sample"]), 32)
+        self.assertTrue(code_map["entries_sample_truncated"])
+        failed = self.assert_failed_entry(report, 39, 0x2101, bad_length, 2, 40)
+        self.assertEqual(failed["end_section"]["rva"], sections[-1][1])
+        sample = report["evidence"]["sections_sample"]
+        self.assertEqual(len(sample), 32)
+        self.assertTrue({"index", "name", "rva", "virtual_size", "raw_size",
+                         "characteristics"} <= set(sample[0]))
+        self.assertEqual([section["index"] for section in sample], list(range(1, 33)))
+        self.assertLess(len(json.dumps(report)), 32768)
 
     def test_bounded_evidence_samples(self):
         data = _image()
