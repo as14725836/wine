@@ -81,6 +81,10 @@ jobs:
           printf 'LLVM_MINGW_ROOT=%s/%s\n' "$RUNNER_TEMP" "${archive%.tar.xz}" >> "$GITHUB_ENV"
           printf '%s\n' "${archive%.tar.xz}" > "$RUNNER_TEMP/termux-ci-diagnostics/llvm-mingw-root.txt"
           printf '%s  %s\n' "$LLVM_MINGW_SHA256" "$archive" > "$RUNNER_TEMP/termux-ci-diagnostics/llvm-mingw-sha256.txt"
+          {
+            "${archive%.tar.xz}/bin/aarch64-w64-mingw32-clang" --version
+            "${archive%.tar.xz}/bin/ld.lld" --version
+          } > "$RUNNER_TEMP/termux-ci-diagnostics/llvm-mingw-versions.txt" 2>&1
 
       - name: Apply pinned source prerequisites
         run: |
@@ -156,6 +160,41 @@ jobs:
               out.write("Build environment: GitHub ARM64 Linux with locked official Termux glibc packages "
                         "and checksum-verified LLVM-MinGW. Android/Termux device execution is not tested.\n\n")
               out.write("```json\n" + text + "\n```\n")
+          PY
+
+      - name: Preserve installed hybrid ntdll for independent diagnosis
+        if: always()
+        run: |
+          /usr/bin/python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+          import subprocess
+          work = Path(os.environ["RUNNER_TEMP"]) / "wine-termux-arm64ec-work"
+          candidates = sorted((work / "staging").glob(
+              "*/data/data/com.termux/files/usr/glibc/opt/wine-arm64ec/lib/wine/aarch64-windows/ntdll.dll"))
+          if not candidates:
+              print("No installed hybrid ntdll is available at this build stage.")
+          else:
+              source = candidates[-1]
+              output = work / "pe-reports" / "installed-ntdll"
+              output.mkdir(parents=True, exist_ok=True)
+              target = output / "ntdll.dll"
+              shutil.copy2(source, target)
+              evidence = {"source": str(source), "size": target.stat().st_size,
+                          "sha256": hashlib.sha256(target.read_bytes()).hexdigest()}
+              tool_root = os.environ.get("LLVM_MINGW_ROOT")
+              if tool_root:
+                  command = [str(Path(tool_root) / "bin/llvm-readobj"),
+                             "--file-headers", "--sections", "--coff-load-config", str(target)]
+                  result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                          text=True, timeout=120)
+                  (output / "llvm-readobj.txt").write_text(result.stdout)
+                  evidence["readobj_returncode"] = result.returncode
+              (output / "provenance.json").write_text(json.dumps(evidence, indent=2) + "\n")
+              print(json.dumps(evidence, indent=2))
           PY
 
       - name: Upload complete Wine archive
